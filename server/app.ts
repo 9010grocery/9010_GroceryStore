@@ -4,7 +4,10 @@ import { auditMutations, terminalContext } from './middleware/audit.js'
 import { errorHandler, notFoundHandler } from './middleware/errorHandler.js'
 import { adminRoutes } from './routes/admin.routes.js'
 import { authRoutes } from './routes/auth.routes.js'
+import { dashboardRoutes } from './routes/dashboard.routes.js'
 import { healthRoutes } from './routes/health.routes.js'
+import { inventoryRoutes } from './routes/inventory.routes.js'
+import { posRoutes } from './routes/pos.routes.js'
 import { storeRoutes } from './routes/store.routes.js'
 import { terminalRoutes } from './routes/terminal.routes.js'
 
@@ -28,6 +31,9 @@ export function createApp(options: { appVersion: string }): Express {
   app.use('/api/admin', adminRoutes)
   app.use('/api/terminal', terminalRoutes)
   app.use('/api/store', storeRoutes)
+  app.use('/api/pos', posRoutes)
+  app.use('/api/inventory', inventoryRoutes)
+  app.use('/api/dashboard', dashboardRoutes)
 
   app.use('/api', notFoundHandler)
   app.use(errorHandler)

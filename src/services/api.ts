@@ -254,6 +254,12 @@ export interface StoreProduct {
   leadTimeDays: number
   expiry: string | null
   active: boolean
+  seniorPwdEligible: boolean
+  /** In-stock batches in the order they sell; markdownPercent 0 = full price. */
+  batches: { qty: number; markdownPercent: number }[]
+  /** The promo as set by the owner (any dates), and the percent that applies right now (0 outside its dates). */
+  promo: { percent: number; start: string; end: string } | null
+  promoPercent: number
 }
 
 export interface StoreSnapshot {
@@ -266,6 +272,11 @@ export interface StoreSnapshot {
   vatRate: number
   /** Empty until the owner names the store. */
   storeName: string
+  /** BIR TIN and registered address printed on receipts; empty until the owner fills them in. */
+  storeTin: string
+  storeAddress: string
+  /** Discount percent a cashier may give without the owner's PIN. */
+  discountThreshold: number
   serverTime: string
 }
 
@@ -283,19 +294,28 @@ export interface ProductPayload {
   stock: number
   expiry: string | null
   active: boolean
+  senior_pwd_eligible: boolean
+  promo_percent: number | null
+  promo_start: string | null
+  promo_end: string | null
 }
 
 export interface SalePayload {
-  lines: { product_id: string; qty: number }[]
+  /** `discount_percent`: the cashier's discount on that item only (Regular customers). */
+  lines: { product_id: string; qty: number; discount_percent?: number }[]
   customer_type: 'Regular' | 'Senior' | 'PWD'
   senior_pwd_id?: string
   senior_pwd_name?: string
   payment_method: PaymentMethod
   amount_received: number
   payment_reference?: string
+  /** Above the threshold, `discount_override_id` is the owner's approval for the biggest item discount. */
+  discount_percent?: number
+  discount_override_id?: number
 }
 
-export const putStoreName = (store_name: string) => api.put('/api/store/settings', { store_name }).then(() => undefined)
+/** Saves the details printed on receipts. Send only the ones that changed. */
+export const putStoreSettings = (changes: { store_name?: string; business_tin?: string; business_address?: string }) => api.put('/api/store/settings', changes).then(() => undefined)
 export const getStoreSnapshot = () => api.get<StoreSnapshot>('/api/store/snapshot', { timeout: 30_000 }).then((r) => r.data)
 export const postSale = (sale: SalePayload) => api.post<Transaction>('/api/store/sales', sale).then((r) => r.data)
 export const postVoid = (id: string, owner_pin: string, reason: string) =>
@@ -344,3 +364,100 @@ export interface TerminalChoice {
 }
 
 export const getTerminalChoices = () => api.get<TerminalChoice[]>('/api/terminal', { timeout: 5_000 }).then((r) => r.data)
+
+// ---------------------------------------------------------------------------
+// POS, inventory and dashboard — server/routes/{pos,inventory,dashboard}.routes.ts
+// ---------------------------------------------------------------------------
+
+export interface DiscountVerdict {
+  requires_approval: boolean
+  approved: boolean
+  percent: number
+  threshold: number
+  override_id?: number
+  approved_by?: string
+  valid_minutes?: number
+}
+
+/** Asks whether `percent` off is allowed. Above the store's threshold, send the owner's PIN to get an approval for the sale. */
+export const postDiscountVerify = (percent: number, owner_pin?: string, reason?: string) =>
+  api.post<DiscountVerdict>('/api/pos/discount/verify', { percent, owner_pin, reason }).then((r) => r.data)
+
+export interface ReceiptData {
+  transaction: Transaction
+  business: { name: string; tin: string; address: string }
+  cashier_name: string
+  reprint: boolean
+}
+
+/** A receipt for printing. `reprint: true` counts it as a reprint (marked on the copy and logged). */
+export const getReceipt = (id: string, reprint = false) => api.get<ReceiptData>(`/api/pos/receipt/${id}`, { params: reprint ? { reprint: 1 } : undefined }).then((r) => r.data)
+
+export interface ReceivePayload {
+  product_id: string
+  qty: number
+  batch_number?: string
+  expiry_date?: string | null
+  unit_cost?: number | null
+  note?: string
+}
+
+export const postReceive = (delivery: ReceivePayload) => api.post<StoreProduct>('/api/inventory/receive', delivery).then((r) => r.data)
+export interface BatchRow { batchId: string; batchNumber: string | null; expiry: string | null; daysLeft: number | null; qty: number; markdownPercent: number | null }
+export const getBatches = (productId: string) => api.get<BatchRow[]>(`/api/inventory/batches/${productId}`).then((r) => r.data)
+export const putBatchMarkdown = (batchId: string, percent: number | null) => api.put<{ ok: true }>(`/api/inventory/batches/${batchId}/markdown`, { percent }).then((r) => r.data)
+export const putBatchExpiry = (batchId: string, expiry: string | null) => api.put<{ ok: true }>(`/api/inventory/batches/${batchId}/expiry`, { expiry_date: expiry }).then((r) => r.data)
+export const deleteStoreProduct = (id: string) => api.delete<{ ok: true; id: string }>(`/api/inventory/products/${id}`).then((r) => r.data)
+
+export interface StockMovement {
+  adjustmentId: number
+  date: string
+  type: 'sale' | 'receive' | 'waste' | 'adjustment' | 'void_return'
+  label: string
+  change: number
+  reason: string
+  batchNumber: string | null
+  expiry: string | null
+  by: string
+  reference: number | null
+}
+
+export interface MovementsPage {
+  productId: string
+  name: string
+  unit: string
+  stock: number
+  hasMore: boolean
+  movements: StockMovement[]
+}
+
+export const getMovements = (productId: string, before?: number) =>
+  api.get<MovementsPage>(`/api/inventory/movements/${productId}`, { params: { limit: 25, before } }).then((r) => r.data)
+
+export interface DashboardSummary {
+  today: { sales: number; receipts: number; averageBasket: number }
+  yesterdaySameTime: { sales: number; receipts: number }
+  salesChange: number
+  receiptsChange: number
+  last7Days: number[]
+  topSellers: { productId: string; name: string; units: number; revenue: number }[]
+  inventory: { activeProducts: number; outOfStock: number; lowStock: number; needReorder: number; nearExpiryProducts: number; nearExpiryUnits: number; expiryDays: number }
+  generatedAt: string
+}
+
+export interface DashboardAlerts {
+  lowStock: { productId: string; name: string; unit: string; stock: number; reorderPoint: number; shortfall: number; outOfStock: boolean }[]
+  expiring: { batchId: string; productId: string; name: string; unit: string; batchNumber: string | null; expiry: string; qty: number; daysLeft: number; expired: boolean }[]
+  counts: { outOfStock: number; lowStock: number; expiringBatches: number; expired: number }
+  expiryDays: number
+}
+
+export interface SalesTrend {
+  days: number
+  daily: { date: string; sales: number; receipts: number }[]
+  hourly: { today: number[]; average6Days: number[] }
+}
+
+export const getDashboardSummary = (expiryDays: number) => api.get<DashboardSummary>('/api/dashboard/summary', { params: { expiry_days: expiryDays } }).then((r) => r.data)
+export const getDashboardAlerts = (expiryDays: number) => api.get<DashboardAlerts>('/api/dashboard/alerts', { params: { expiry_days: expiryDays } }).then((r) => r.data)
+export const getSalesTrend = (days = 7) => api.get<SalesTrend>('/api/dashboard/sales-trend', { params: { days } }).then((r) => r.data)
