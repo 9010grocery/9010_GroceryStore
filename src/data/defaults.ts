@@ -35,6 +35,7 @@ export const defaultSettings: Settings = {
   machineSerial: '',
   permitNumber: '',
   payments: { Cash: true, GCash: true, Card: true, Maya: true },
+  discountThreshold: 20,
   forecastMethod: 'WMA',
   wmaWeights: [0.5, 0.3, 0.2],
   sesAlpha: 0.4,

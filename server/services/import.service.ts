@@ -91,7 +91,7 @@ const lower = (value: string | null) => value?.toLowerCase() ?? ''
 interface ProductRef { product_id: number; product_name: string; unit_price: number }
 
 async function productIndex(connection: PoolConnection) {
-  const [rows] = await connection.query<RowDataPacket[]>('SELECT product_id, barcode, product_code, product_name, unit_price FROM products')
+  const [rows] = await connection.query<RowDataPacket[]>('SELECT product_id, barcode, product_code, product_name, unit_price FROM products WHERE deleted_at IS NULL')
   const byBarcode = new Map<string, ProductRef>()
   const bySku = new Map<string, ProductRef>()
   const byName = new Map<string, ProductRef>()

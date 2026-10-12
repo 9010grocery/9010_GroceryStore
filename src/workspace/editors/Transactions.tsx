@@ -3,6 +3,7 @@ import type { PaymentMethod, Transaction } from '../../data/types'
 import { netTotal } from '../../lib/ai'
 import { daysBetween, downloadCsv, peso, relativeDay, shortDate, time } from '../../lib/format'
 import { OwnerPinModal } from '../../components/OwnerPinModal'
+import { apiErrorMessage } from '../../services/api'
 import { useStore } from '../../store/StoreContext'
 import { Empty, Field, Segmented, StatusPill } from '../ui'
 import { Receipt } from './PointOfSale'
@@ -16,6 +17,7 @@ export function TransactionsPanel() {
   const [query, setQuery] = useState('')
   const [page, setPage] = useState(0)
   const [confirmVoid, setConfirmVoid] = useState<Transaction | null>(null)
+  const [reprinting, setReprinting] = useState(false)
   const now = new Date()
   const q = query.trim().toLowerCase()
   const rows = [...state.transactions].reverse().filter((t) => (range === 'Today' ? daysBetween(t.date, now) === 0 : true) && (method === 'All' || t.payment.method === method) && (!q || t.number.toLowerCase().includes(q) || t.lines.some((l) => l.name.toLowerCase().includes(q))))
@@ -26,6 +28,19 @@ export function TransactionsPanel() {
   const cashierName = (id: string) => state.employees.find((e) => e.id === id)?.name ?? '—'
   // Any terminal can void a same-day sale, but only with the owner's PIN and a reason.
   const canVoid = (t: Transaction) => t.status === 'Completed' && daysBetween(t.date, now) === 0
+
+  // The server counts the reprint (the copy is marked REPRINT) and logs it; then the browser's print dialog opens.
+  async function reprint(t: Transaction) {
+    setReprinting(true)
+    try {
+      await actions.reprintReceipt(t.id)
+      window.setTimeout(() => window.print(), 80)
+    } catch (error) {
+      actions.toast(`Could not reprint: ${apiErrorMessage(error)}`, 'error')
+    } finally {
+      setReprinting(false)
+    }
+  }
 
   return <div className={selected ? 'module-panel split-detail' : 'module-panel'}>
     <div className="split-main">
@@ -49,7 +64,7 @@ export function TransactionsPanel() {
       <div className="detail-head"><span className="eyebrow">RECEIPT DETAIL</span><button className="modal-close" aria-label="Close detail" onClick={() => actions.setUi({ selectedTxnId: null })}>✕</button></div>
       <Receipt txn={selected} />
       <div className="detail-actions">
-        <button className="outline-button" onClick={() => window.print()}>REPRINT ⎙</button>
+        <button className="outline-button" disabled={reprinting} onClick={() => void reprint(selected)}>{reprinting ? 'PREPARING…' : 'REPRINT ⎙'}</button>
         <button className="outline-button" disabled={selected.status === 'Voided' || selected.status === 'Refunded'} onClick={() => actions.navigate('Transactions', { returnTxnId: selected.id })}>RETURN / REFUND</button>
         {canVoid(selected) && <button className="danger-button" onClick={() => setConfirmVoid(selected)}>VOID</button>}
       </div>
@@ -84,7 +99,9 @@ export function ReturnsPanel() {
 
   function find() {
     const q = lookup.trim().toUpperCase()
-    const match = state.transactions.find((t) => t.number === q || t.number.endsWith(q.replace(/^OR-?/, '').padStart(6, '0')))
+    // Full number (INV-2026-000123, or an older OR-000123), or just the digits at the end: newest match first.
+    const tail = /^\d+$/.test(q) ? q.padStart(6, '0') : null
+    const match = [...state.transactions].reverse().find((t) => t.number === q || (tail !== null && t.number.endsWith(`-${tail}`)))
     if (!match) { actions.toast(`No receipt ${lookup}`, 'error'); return }
     actions.setUi({ returnTxnId: match.id })
     setQty({})
@@ -92,7 +109,9 @@ export function ReturnsPanel() {
 
   const returned = (productId: string) => txn?.refunds.flatMap((r) => r.lines).filter((l) => l.productId === productId).reduce((s, l) => s + l.qty, 0) ?? 0
   const ratio = txn && txn.gross ? txn.total / txn.gross : 1
-  const amount = txn ? txn.lines.reduce((s, l) => s + (qty[l.productId] ?? 0) * l.price * ratio, 0) : 0
+  // What one returned unit gives back: its share of what the customer paid for the line (older receipts: shared in proportion).
+  const unitRefund = (l: { qty: number; price: number; net?: number | null }) => (l.net !== null && l.net !== undefined && l.qty ? l.net / l.qty : l.price * ratio)
+  const amount = txn ? txn.lines.reduce((s, l) => s + (qty[l.productId] ?? 0) * unitRefund(l), 0) : 0
   const count = Object.values(qty).reduce((a, b) => a + b, 0)
   const age = txn ? daysBetween(txn.date, now) : 0
 
@@ -108,7 +127,7 @@ export function ReturnsPanel() {
 
   return <div className="module-panel">
     <div className="module-intro"><div><span className="eyebrow">AFTER-SALES</span><h2>Returns &amp; refunds</h2><p>Look up a receipt, choose the items being returned, and decide whether they go back on the shelf.</p></div></div>
-    <div className="lookup-row"><label className="search-field compact"><span>⌕</span><input placeholder="Receipt number, e.g. OR-000123" value={lookup} onChange={(e) => setLookup(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') find() }} /></label><button className="primary-button" onClick={find}>FIND RECEIPT</button></div>
+    <div className="lookup-row"><label className="search-field compact"><span>⌕</span><input placeholder="Receipt number, e.g. INV-2026-000123" value={lookup} onChange={(e) => setLookup(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') find() }} /></label><button className="primary-button" onClick={find}>FIND RECEIPT</button></div>
     {!txn && <Empty>Search a receipt, or pick one in the Transactions panel and press “Return / Refund”.</Empty>}
     {txn && <div className="return-form">
       <div className="return-head"><div><b>{txn.number}</b><small>{shortDate(txn.date)} {time(txn.date)} · {txn.payment.method} · {peso(txn.total)}</small></div><StatusPill value={txn.status} /></div>
@@ -118,9 +137,9 @@ export function ReturnsPanel() {
           {txn.lines.map((line) => {
             const available = line.qty - returned(line.productId)
             const value = qty[line.productId] ?? 0
-            return <tr key={line.productId}><td><b>{line.name}</b><small>{peso(line.price)} each</small></td><td>{line.qty}</td><td>{returned(line.productId)}</td>
+            return <tr key={line.productId}><td><b>{line.name}</b><small>{peso(line.price)} each{line.discountPercent ? ` · ${line.discountPercent}% off` : ''}</small></td><td>{line.qty}</td><td>{returned(line.productId)}</td>
               <td><div className="quantity-control"><button disabled={value <= 0} onClick={() => setQty({ ...qty, [line.productId]: value - 1 })}>−</button><span>{value}</span><button disabled={value >= available} onClick={() => setQty({ ...qty, [line.productId]: value + 1 })}>+</button></div></td>
-              <td>{peso(value * line.price * ratio)}</td></tr>
+              <td>{peso(value * unitRefund(line))}</td></tr>
           })}
         </tbody></table>
         <div className="form-grid">

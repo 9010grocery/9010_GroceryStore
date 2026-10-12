@@ -4,6 +4,6 @@
 
 CREATE DATABASE IF NOT EXISTS grocery9010 CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
-CREATE USER IF NOT EXISTS 'pos_app'@'localhost' IDENTIFIED BY 'change-this-password';
+CREATE USER IF NOT EXISTS 'pos_app'@'localhost' IDENTIFIED BY 'MyPassword123!';
 GRANT ALL PRIVILEGES ON grocery9010.* TO 'pos_app'@'localhost';
 FLUSH PRIVILEGES;

@@ -1,0 +1,90 @@
+/* Step 3: manual discount, delivery batches, stock movement history, dashboard alerts. */
+
+/* Discount row in the cart */
+.cart-discount { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 0 0; font-size: 9px; color: #9ba196; }
+.cart-discount .eyebrow { margin: 0; }
+.cart-discount button { min-height: 24px; padding: 0 8px; border: 1px solid #4a5047; border-radius: 2px; color: #c3c9be; background: #2c302a; font: 800 8px 'Space Grotesk', sans-serif; cursor: pointer; }
+.cart-discount button:hover { border-color: #737e69; color: var(--paper); }
+.cart-discount .applied { display: flex; align-items: center; gap: 6px; color: #cbd0c7; }
+.cart-discount .applied b { font: 700 9px 'Space Grotesk', sans-serif; color: var(--green); }
+.cart-discount .needs-approval b { color: var(--orange); }
+.cart-discount .remove { width: 22px; padding: 0; border-color: transparent; background: transparent; color: #c48673; }
+.discount-quick { display: flex; flex-wrap: wrap; gap: 6px; margin: 4px 0 10px; }
+.discount-quick button { min-width: 48px; min-height: 28px; border: 1px solid #4a5047; color: #c3c9be; background: #2c302a; font: 800 9px 'Space Grotesk', sans-serif; cursor: pointer; }
+.discount-quick button.selected { border-color: var(--green); color: var(--green); }
+.cart-totals .discount-line b { color: var(--green); }
+.payment-hint.warn { color: var(--orange); }
+
+/* Receipt extras */
+.receipt-reprint { margin: 6px 0 0; padding: 2px 0; border: 1px dashed #5c5f57; text-align: center; font-weight: 800; letter-spacing: .08em; }
+.receipt-id-block { padding: 6px 0; border-bottom: 1px dashed #9a9a92; }
+.receipt-id-block span { display: block; }
+
+/* Delivery + movement modals */
+.batch-hint { margin: 2px 0 0; color: #959c91; font-size: 9px; line-height: 1.5; }
+.movement-table { width: 100%; }
+.movement-table td small { display: block; color: #81887e; font-size: 8px; }
+.movement-change { font: 700 10px 'Space Grotesk', sans-serif; }
+.movement-change.plus { color: var(--green); }
+.movement-change.minus { color: var(--red); }
+.status-pill.sale { border-color: #455e66; color: #a4c8d0; background: #2c393b; }
+.status-pill.delivery { border-color: #4e6244; color: #b8d39f; background: #35412f; }
+.status-pill.return-to-stock { border-color: #4e6244; color: #b8d39f; background: #35412f; }
+.status-pill.adjustment, .status-pill.waste { border-color: #765a3f; color: #e4b27f; background: #40352a; }
+.toolbar-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+
+/* Dashboard attention list */
+.attention-symbol.out { color: var(--red); }
+.dashboard-loading { color: #81887e; font-size: 9px; padding: 4px 0; }
+
+/* Per-item discounts */
+.cart-discount .discount-hint { margin-right: auto; color: #858b81; font: 600 9px 'Space Grotesk', sans-serif; }
+.cart-item-name .line-discount { display: flex; align-items: center; gap: 6px; margin-top: 3px; }
+.line-discount button { min-width: 22px; height: 18px; padding: 0 5px; border: 1px solid #4a5047; border-radius: 2px; color: #aab1a5; background: #2c302a; font: 800 9px 'Space Grotesk', sans-serif; cursor: pointer; }
+.line-discount button:hover { border-color: var(--green); color: var(--green); }
+.line-discount em { color: var(--green); font: 800 9px 'Space Grotesk', sans-serif; font-style: normal; }
+.cart-line > strong s { color: #787f75; font-weight: 500; }
+.receipt-line-discount { display: grid; grid-template-columns: 1fr auto auto; color: #555; font-size: .92em; }
+.check-row { display: flex; align-items: center; gap: 8px; min-height: 34px; color: #c3c9be; }
+.check-row input { width: 16px; height: 16px; }
+
+.warn-text { color: #e0a458 !important; }
+
+/* Batch discount window: one card per batch */
+.batch-list { display: grid; gap: 10px; margin-top: 10px; }
+.batch-card { border: 1px solid #3a4036; background: #252923; border-radius: 3px; padding: 10px 12px; }
+.batch-card.dirty { border-color: #9cbd7d; }
+.batch-card-head { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; font-size: 11px; color: #e6e9e1; }
+.batch-onhand { color: #959c91; font-size: 10px; }
+.batch-onhand b { color: #e6e9e1; font-size: 13px; }
+.batch-tag { padding: 2px 6px; border-radius: 2px; font: 800 8px 'Space Grotesk', sans-serif; letter-spacing: .5px; background: #2f3a2a; color: #9cbd7d; border: 1px solid #4a5a40; }
+.batch-tag.warn { background: #3d3222; color: #e0a458; border-color: #6b5530; }
+.batch-tag.sale { background: #2d3a45; color: #8cc4e8; border-color: #3f5a70; }
+.batch-card-fields { display: grid; grid-template-columns: 1fr 1fr auto; gap: 12px; align-items: start; }
+.batch-save { align-self: start; margin-top: 19px; min-width: 120px; min-height: 34px; }
+.batch-save:disabled { opacity: .45; cursor: default; }
+.percent-input { position: relative; display: block; }
+.percent-input input { padding-right: 26px !important; }
+.percent-input i { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); color: #959c91; font-style: normal; font-size: 12px; pointer-events: none; }
+
+/* Promotion box in the product editor */
+.promo-box { margin-top: 12px; padding: 10px 12px; border: 1px solid #3a4036; background: #252923; border-radius: 3px; }
+.promo-title { margin-bottom: 8px; font: 800 9px 'Space Grotesk', sans-serif; letter-spacing: .6px; color: #c3c9be; }
+.promo-title small { margin-left: 8px; font: 500 9px 'Manrope', sans-serif; letter-spacing: 0; color: #959c91; }
+.promo-box .form-grid { grid-template-columns: repeat(3, 1fr); }
+.product-promo-badge { display: inline-block; margin-left: 6px; padding: 1px 5px; border-radius: 2px; font: 800 8px 'Space Grotesk', sans-serif; letter-spacing: .4px; background: #3d3222; color: #e0a458; border: 1px solid #6b5530; }
+
+/* Date fields everywhere: a visible calendar button on the dark theme */
+input[type="date"] { color-scheme: dark; }
+input[type="date"]::-webkit-calendar-picker-indicator {
+  width: 22px; height: 22px; padding: 3px; margin-left: 4px; border-radius: 2px; cursor: pointer; opacity: .95;
+  background: #3a4036 url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23d4d8d0' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='4' width='18' height='18' rx='2'/%3E%3Cpath d='M16 2v4M8 2v4M3 10h18'/%3E%3C/svg%3E") center / 14px 14px no-repeat;
+}
+input[type="date"]::-webkit-calendar-picker-indicator:hover { background-color: #4a5a40; }
+
+/* Cart rows: item name, unit price and discount tag share one line (they wrap only when the cart is narrow) */
+.cart-line { min-height: 40px !important; padding: 3px 0; }
+.cart-item-name { flex-direction: row !important; flex-wrap: wrap; align-items: center; gap: 2px 7px !important; }
+.cart-item-name b { min-width: 0; max-width: 100%; }
+.cart-item-name small { white-space: nowrap; }
+.cart-item-name .line-discount { margin-top: 0 !important; }
