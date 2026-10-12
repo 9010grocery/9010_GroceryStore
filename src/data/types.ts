@@ -30,6 +30,14 @@ export interface Product {
   color: string
   symbol: string
   active: boolean
+  /** Gets the Senior/PWD discount. Undefined (older saved data) counts as yes. */
+  seniorPwdEligible?: boolean
+  /** In-stock batches in selling order; a markdownPercent above 0 is the owner's discount on that batch. */
+  batches?: { qty: number; markdownPercent: number }[]
+  /** Owner's promotion: a percent off every unit between two dates (YYYY-MM-DD). */
+  promo?: { percent: number; start: string; end: string } | null
+  /** The promo percent that applies today (0 when none or outside its dates). Set by the server. */
+  promoPercent?: number
 }
 
 export interface Supplier {
@@ -56,6 +64,10 @@ export interface SaleLine {
   name: string
   qty: number
   price: number
+  /** Cashier's percent off this item. */
+  discountPercent?: number | null
+  /** What the customer paid for the line after every discount (refunds give back its share). */
+  net?: number | null
 }
 
 export interface Refund {
@@ -73,7 +85,16 @@ export interface Transaction {
   number: string
   date: string
   cashierId: string
+  /** Register the sale was rung up on (PC-00 = the server PC). */
+  terminalId?: string
   customerType: CustomerType
+  /** Senior Citizen / PWD ID number and name printed on the receipt. */
+  seniorPwdId?: string | null
+  seniorPwdName?: string | null
+  /** Cashier's own discount on a Regular sale, in percent. */
+  discountPercent?: number | null
+  /** How many times this receipt was reprinted (0 = only the original). */
+  reprintCount?: number
   lines: SaleLine[]
   gross: number // sum of shelf prices (VAT inclusive)
   lessVat: number // VAT removed for VAT-exempt (Senior/PWD) sales
@@ -156,6 +177,8 @@ export interface Settings {
   machineSerial: string
   permitNumber: string
   payments: Record<PaymentMethod, boolean>
+  /** Discount percent a cashier may give without the owner's PIN. Set on the server (Settings in Step 8); read-only here. */
+  discountThreshold: number
   forecastMethod: ForecastMethod
   wmaWeights: number[]
   sesAlpha: number
@@ -169,6 +192,16 @@ export interface Settings {
 export interface CartLine {
   productId: string
   qty: number
+  /** The cashier's discount on this item only (Regular customers). Above the store's threshold it needs the owner's PIN. */
+  discountPercent?: number
+}
+
+/** A cashier's own discount on the current sale. Above the threshold it carries the owner's PIN approval. */
+export interface CartDiscount {
+  percent: number
+  /** From POST /api/pos/discount/verify; null for a discount within the threshold. */
+  overrideId: number | null
+  approvedBy: string | null
 }
 
 export interface HeldCart {

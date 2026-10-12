@@ -1,15 +1,16 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { allWorkspaces, colorForCategory, defaultSettings, emptyStoreData, OWNER_ONLY_WORKSPACES, type StoreData } from '../data/defaults'
 import type {
-  CartLine, CustomerRequest, CustomerType, Employee, HeldCart, PaymentMethod, Product, PurchaseOrder, RequestStatus, Role, Settings, Transaction, WasteEntry, WasteReason, WorkspaceName,
+  CartDiscount, CartLine, CustomerRequest, CustomerType, Employee, HeldCart, PaymentMethod, Product, PurchaseOrder, RequestStatus, Role, Settings, Transaction, WasteEntry, WasteReason, WorkspaceName,
 } from '../data/types'
 import { actingTerminalId } from '../lib/actingTerminal'
 import { abcClasses, analyseProduct, buildInsights, type Insight, type ProductAnalysis } from '../lib/ai'
 import { DAY_MS, dateKey } from '../lib/format'
 import { computeTotals } from '../lib/pos'
 import {
-  apiErrorMessage, getAuthStatus, getStoreSnapshot, patchRequestStatus, postEmployee, postProduct, postRefund, postRequest, postSale, postStockChange, postVoid, postWaste,
-  putEmployee, putProduct, putStoreName, verifyOwnerPin, type ProductPayload, type StoreProduct, type StoreSnapshot,
+  apiErrorDetails, apiErrorMessage, apiStatus, deleteStoreProduct, getAuthStatus, getReceipt, getStoreSnapshot, patchRequestStatus, postEmployee, postProduct, postReceive, postRefund,
+  postRequest, postSale, postStockChange, postVoid, postWaste, putEmployee, putProduct, putStoreSettings, verifyOwnerPin,
+  type ProductPayload, type ReceivePayload, type StoreProduct, type StoreSnapshot,
 } from '../services/api'
 
 export interface UiState {
@@ -36,6 +37,8 @@ interface StoreState extends StoreData {
   settings: Settings
   cart: CartLine[]
   customerType: CustomerType
+  /** The cashier's own discount on the sale being rung up (Regular customers only). */
+  discount: CartDiscount | null
   heldCarts: HeldCart[]
   sessionId: string | null
   ui: UiState
@@ -61,6 +64,7 @@ function freshState(): StoreState {
     settings: defaultSettings,
     cart: [],
     customerType: 'Regular',
+    discount: null,
     heldCarts: [],
     sessionId: null,
     ui: defaultUi,
@@ -76,7 +80,7 @@ function loadState(): StoreState {
     if (raw) {
       const saved = JSON.parse(raw) as StoreState
       // Shown straight away, then refreshed from the server.
-      return { ...saved, settings: { ...defaultSettings, ...saved.settings }, ui: { ...defaultUi, ...saved.ui }, source: saved.source ?? 'demo', liveSyncedAt: saved.liveSyncedAt ?? null, liveError: null }
+      return { ...saved, discount: saved.discount ?? null, settings: { ...defaultSettings, ...saved.settings }, ui: { ...defaultUi, ...saved.ui }, source: saved.source ?? 'demo', liveSyncedAt: saved.liveSyncedAt ?? null, liveError: null }
     }
   } catch { /* storage unavailable or corrupt: fall back to the seed */ }
   return freshState()
@@ -111,6 +115,10 @@ function toPayload(product: Product): ProductPayload {
     stock: Math.round(product.stock),
     expiry: product.expiry ? dateKey(product.expiry) : null,
     active: product.active,
+    senior_pwd_eligible: product.seniorPwdEligible !== false,
+    promo_percent: product.promo && product.promo.percent > 0 ? product.promo.percent : null,
+    promo_start: product.promo && product.promo.percent > 0 ? product.promo.start || null : null,
+    promo_end: product.promo && product.promo.percent > 0 ? product.promo.end || null : null,
   }
 }
 
@@ -131,9 +139,14 @@ function applySnapshot(s: StoreState, snap: StoreSnapshot): Partial<StoreState> 
     requests: snap.requests,
     employees: snap.employees,
     // The store name is set on the server (first launch or Settings) so every PC and receipt shows the same one.
-    settings: { ...s.settings, vatRate: snap.vatRate, ...(snap.storeName ? { storeName: snap.storeName, businessName: snap.storeName } : {}) },
+    // TIN and address are kept on the server too, so every receipt on every PC prints the same ones.
+    settings: {
+      ...s.settings, vatRate: snap.vatRate, tin: snap.storeTin, address: snap.storeAddress, discountThreshold: snap.discountThreshold,
+      ...(snap.storeName ? { storeName: snap.storeName, businessName: snap.storeName } : {}),
+    },
     // Carts and purchase orders saved before the first load may point at products that don't exist, so they go.
     cart: firstLoad ? [] : keepLines(s.cart),
+    discount: firstLoad ? null : s.discount,
     heldCarts: firstLoad ? [] : s.heldCarts.map((h) => ({ ...h, lines: keepLines(h.lines) })).filter((h) => h.lines.length),
     purchaseOrders: firstLoad ? [] : s.purchaseOrders,
     ui: {
@@ -260,14 +273,30 @@ function useStoreValue() {
         return { cart: existing ? s.cart.map((line) => (line.productId === productId ? { ...line, qty: line.qty + qty } : line)) : [...s.cart, { productId, qty }] }
       }),
       setCartQty: (productId: string, qty: number) => update((s) => ({ cart: qty <= 0 ? s.cart.filter((l) => l.productId !== productId) : s.cart.map((l) => (l.productId === productId ? { ...l, qty } : l)) })),
-      clearCart: () => update(() => ({ cart: [], customerType: 'Regular' })),
-      setCustomerType: (customerType: CustomerType) => update(() => ({ customerType })),
-      holdCart: (label: string) => update((s) => (s.cart.length ? { heldCarts: [...s.heldCarts, { id: uid('h'), label, lines: s.cart, customerType: s.customerType, heldAt: new Date().toISOString() }], cart: [], customerType: 'Regular' } : {})),
+      clearCart: () => update(() => ({ cart: [], customerType: 'Regular', discount: null })),
+      // Senior/PWD get their discount by law, so a cashier discount can't be stacked on top.
+      setCustomerType: (customerType: CustomerType) => update((s) => (customerType === 'Regular' ? { customerType } : { customerType, discount: null, cart: s.cart.map(({ discountPercent: _dropped, ...line }) => line) })),
+      /** Records the owner's PIN approval for the biggest item discount in the cart (null to forget it). */
+      setDiscount: (discount: CartDiscount | null) => update(() => ({ discount })),
+      /** Discount on one item of the sale (percent), or null to take it off. */
+      setLineDiscount: (productId: string, percent: number | null) => update((s) => ({
+        cart: s.cart.map((line) => {
+          if (line.productId !== productId) return line
+          const { discountPercent: _old, ...rest } = line
+          return percent && percent > 0 ? { ...rest, discountPercent: percent } : rest
+        }),
+      })),
+      /** The same discount on every item of the sale. */
+      setAllDiscount: (percent: number | null) => update((s) => ({
+        cart: s.cart.map(({ discountPercent: _old, ...line }) => (percent && percent > 0 ? { ...line, discountPercent: percent } : line)),
+      })),
+      // A held sale doesn't keep its discount: the owner's approval is only good for a few minutes.
+      holdCart: (label: string) => update((s) => (s.cart.length ? { heldCarts: [...s.heldCarts, { id: uid('h'), label, lines: s.cart, customerType: s.customerType, heldAt: new Date().toISOString() }], cart: [], customerType: 'Regular', discount: null } : {})),
       resumeCart: (id: string) => update((s) => {
         const held = s.heldCarts.find((h) => h.id === id)
         if (!held) return {}
         const parked = s.cart.length ? [{ id: uid('h'), label: 'Parked sale', lines: s.cart, customerType: s.customerType, heldAt: new Date().toISOString() }] : []
-        return { cart: held.lines, customerType: held.customerType, heldCarts: [...s.heldCarts.filter((h) => h.id !== id), ...parked] }
+        return { cart: held.lines, customerType: held.customerType, discount: null, heldCarts: [...s.heldCarts.filter((h) => h.id !== id), ...parked] }
       }),
       discardHeld: (id: string) => update((s) => ({ heldCarts: s.heldCarts.filter((h) => h.id !== id) })),
 
@@ -279,37 +308,47 @@ function useStoreValue() {
         const s = stateRef.current
         if (!s.cart.length) return null
         if (live()) {
-          const txn = await postSale({
-            lines: s.cart.map((line) => ({ product_id: line.productId, qty: line.qty })),
-            customer_type: s.customerType,
-            senior_pwd_id: payment.seniorPwd?.id,
-            senior_pwd_name: payment.seniorPwd?.name,
-            payment_method: payment.method,
-            amount_received: payment.tendered,
-            payment_reference: payment.reference,
-          })
+          let txn: Transaction
+          try {
+            txn = await postSale({
+              lines: s.cart.map((line) => ({ product_id: line.productId, qty: line.qty, ...(s.customerType === 'Regular' && line.discountPercent ? { discount_percent: line.discountPercent } : {}) })),
+              customer_type: s.customerType,
+              senior_pwd_id: payment.seniorPwd?.id,
+              senior_pwd_name: payment.seniorPwd?.name,
+              payment_method: payment.method,
+              amount_received: payment.tendered,
+              payment_reference: payment.reference,
+              discount_override_id: s.customerType === 'Regular' && s.discount?.overrideId ? s.discount.overrideId : undefined,
+            })
+          } catch (error) {
+            // The owner's approval was refused (expired, already used): the cashier has to get it again.
+            if (apiStatus(error) === 403 && apiErrorDetails<{ code?: string }>(error)?.code === 'OWNER_PIN_REQUIRED') {
+              update((current) => ({ discount: current.discount ? { ...current.discount, overrideId: null, approvedBy: null } : null }))
+            }
+            throw error
+          }
           update((current) => {
             let products = current.products
             for (const line of txn.lines) products = changeStock(products, line.productId, -line.qty)
-            return { products, transactions: [...current.transactions, txn], cart: [], customerType: 'Regular' }
+            return { products, transactions: [...current.transactions, txn], cart: [], customerType: 'Regular', discount: null }
           })
           return txn
         }
         const lines = s.cart.map((line) => {
           const product = s.products.find((p) => p.id === line.productId)!
-          return { productId: product.id, name: product.name, qty: line.qty, price: product.price }
+          return { productId: product.id, name: product.name, qty: line.qty, price: product.price, discountable: product.seniorPwdEligible !== false, discountPercent: s.customerType === 'Regular' ? line.discountPercent ?? 0 : 0 }
         })
-        const totals = computeTotals(lines, s.customerType, s.settings.vatRate)
+        const { lineNets, ...totals } = computeTotals(lines, s.customerType, s.settings.vatRate)
         const txn: Transaction = {
-          id: uid('t'), number: `OR-${String(s.nextReceipt).padStart(6, '0')}`, date: new Date().toISOString(), cashierId: s.sessionId ?? 'e1',
-          customerType: s.customerType, lines, ...totals,
+          id: uid('t'), number: `INV-${new Date().getFullYear()}-${String(s.nextReceipt).padStart(6, '0')}`, date: new Date().toISOString(), cashierId: s.sessionId ?? 'e1',
+          customerType: s.customerType, lines: lines.map(({ discountable: _d, ...line }, i) => ({ ...line, net: lineNets[i] })), ...totals,
           payment: { method: payment.method, tendered: payment.tendered, reference: payment.reference, change: Math.max(0, Math.round((payment.tendered - totals.total) * 100) / 100) },
           status: 'Completed', refunds: [],
         }
         update((current) => {
           let products = current.products
           for (const line of lines) products = changeStock(products, line.productId, -line.qty)
-          return { products, transactions: [...current.transactions, txn], nextReceipt: current.nextReceipt + 1, cart: [], customerType: 'Regular' }
+          return { products, transactions: [...current.transactions, txn], nextReceipt: current.nextReceipt + 1, cart: [], customerType: 'Regular', discount: null }
         })
         return txn
       },
@@ -377,6 +416,23 @@ function useStoreValue() {
         update((s) => ({ products: changeStock(s.products, productId, delta) }))
         if (live()) save('Stock change', async () => replaceProduct(await postStockChange(productId, delta, reason)))
       },
+      /** Books a delivery as its own batch (batch number + expiry). Not optimistic: resolves once the server has saved it, or throws with its reason. */
+      async receiveStock(delivery: ReceivePayload): Promise<Product> {
+        const saved = await postReceive(delivery)
+        replaceProduct(saved)
+        return toUiProduct(saved)
+      },
+      /** Removes a product from the catalog (owner; only when nothing is on hand). Throws with the server's reason. */
+      async deleteProduct(productId: string): Promise<void> {
+        await deleteStoreProduct(productId)
+        update((s) => ({ products: s.products.filter((p) => p.id !== productId), cart: s.cart.filter((l) => l.productId !== productId) }))
+      },
+      /** Fetches a receipt for printing and counts it as a reprint on the server. Resolves to the saved receipt. */
+      async reprintReceipt(txnId: string): Promise<Transaction> {
+        const { transaction } = await getReceipt(txnId, true)
+        replaceTxn(transaction)
+        return transaction
+      },
       logWaste: (entry: { productId: string; qty: number; reason: WasteReason; notes: string }) => {
         const product = stateRef.current.products.find((p) => p.id === entry.productId)
         if (!product) return
@@ -432,7 +488,7 @@ function useStoreValue() {
         })
         if (receiving && live()) {
           save(`Delivery for ${po.number}`, async () => {
-            for (const line of po.lines) replaceProduct(await postStockChange(line.productId, line.qty, `Received ${po.number}`))
+            for (const line of po.lines) replaceProduct(await postReceive({ product_id: line.productId, qty: line.qty, batch_number: po.number, unit_cost: line.cost, note: `Received ${po.number}` }))
           })
         }
       },
@@ -472,10 +528,15 @@ function useStoreValue() {
       openShift: (openingFloat: number) => update((s) => ({ shift: { id: uid('sh'), openedAt: new Date().toISOString(), openedBy: s.sessionId ?? 'e1', openingFloat, movements: [] } })),
 
       updateSettings: (settings: Partial<Settings>) => {
-        const before = stateRef.current.settings.storeName
+        const before = stateRef.current.settings
         update((s) => ({ settings: { ...s.settings, ...settings } }))
-        // Only the store name is shared through the server for now; the other settings stay on this PC.
-        if (live() && settings.storeName && settings.storeName !== before) save('Store name', () => putStoreName(settings.storeName!.trim()))
+        // The store name, TIN and address are shared through the server (every receipt prints them); the other settings stay on this PC for now.
+        if (!live()) return
+        const changes: { store_name?: string; business_tin?: string; business_address?: string } = {}
+        if (settings.storeName && settings.storeName !== before.storeName) changes.store_name = settings.storeName.trim()
+        if (settings.tin !== undefined && settings.tin !== before.tin) changes.business_tin = settings.tin.trim()
+        if (settings.address !== undefined && settings.address !== before.address) changes.business_address = settings.address.trim()
+        if (Object.keys(changes).length) save('Store details', () => putStoreSettings(changes))
       },
       toast,
     }
