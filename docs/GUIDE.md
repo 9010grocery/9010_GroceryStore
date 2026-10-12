@@ -240,8 +240,18 @@ those lines and import the same file again: rows already imported are skipped or
 `08/14/2026` are read month-first; tick **Dates are day first** for `14/08/2026`. Import **products before sales
 and waste**, because those are matched to products by barcode, SKU or name.
 
+### Running on two devices (same Wi-Fi/router, or a direct LAN cable)
+1. **Server PC**: run `powershell -ExecutionPolicy Bypass -File scripts\lan-setup.ps1` as administrator. It opens
+   port 4010 and prints the server's IP. Start the app with `APP_MODE=server` (`npm run electron:dev`).
+2. **Direct cable, no router**: give both Ethernet adapters static IPs in the same subnet (e.g. `192.168.50.1` and
+   `192.168.50.2`, mask `255.255.255.0`, no gateway). Wi-Fi/router users can skip this.
+3. **Second PC** (development): in its `.env` set `APP_MODE=terminal`, `SERVER_HOST=<server IP>`,
+   `TERMINAL_ID=PC-01` (add the terminal in Admin Station first), then `npm run electron:dev`.
+   For the installed app, pick **cashier terminal** on first launch and enter the same values.
+4. Check from the second PC: open `http://<server IP>:4010/api/health` in a browser.
+
 ### A cashier terminal can't find the server (real LAN setup)
-- On the server PC, allow **TCP port 4010** through Windows Firewall (private network).
+- On the server PC, allow **TCP port 4010** through Windows Firewall (private network) — `scripts\lan-setup.ps1` does this.
 - On the terminal, the server address must be the server PC's LAN IP (run `ipconfig` on the server), not `127.0.0.1`.
 - The terminal's saved settings live in `%APPDATA%\9010 Grocery Store\config.json` (installed app) or
   `%APPDATA%\9010-pos\config.json` (development). Delete that file to run the first-launch setup again.
