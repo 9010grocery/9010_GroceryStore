@@ -8,7 +8,7 @@ import { abcClasses, analyseProduct, buildInsights, type Insight, type ProductAn
 import { DAY_MS, dateKey } from '../lib/format'
 import { computeTotals } from '../lib/pos'
 import {
-  apiErrorDetails, apiErrorMessage, apiStatus, deleteStoreProduct, getAuthStatus, getReceipt, getStoreSnapshot, patchRequestStatus, postEmployee, postProduct, postReceive, postRefund,
+  apiErrorDetails, apiErrorMessage, apiStatus, deleteStoreProduct, getAuthStatus, getReceipt, getStoreSnapshot, patchRequestStatus, postEmployee, postEmployeeActive, postProduct, postReceive, postRefund,
   postRequest, postSale, postStockChange, postVoid, postWaste, putEmployee, putProduct, putStoreSettings, verifyOwnerPin,
   type ProductPayload, type ReceivePayload, type StoreProduct, type StoreSnapshot,
 } from '../services/api'
@@ -433,19 +433,24 @@ function useStoreValue() {
         replaceTxn(transaction)
         return transaction
       },
-      logWaste: (entry: { productId: string; qty: number; reason: WasteReason; notes: string }) => {
+      /** Resolves to null when saved, or the reason it was refused (for example "Only 3 Cola in stock"). */
+      async logWaste(entry: { productId: string; qty: number; reason: WasteReason; notes: string }): Promise<string | null> {
         const product = stateRef.current.products.find((p) => p.id === entry.productId)
-        if (!product) return
-        const tempId = uid('w')
-        const record: WasteEntry = { ...entry, id: tempId, value: product.cost * entry.qty, date: new Date().toISOString(), by: stateRef.current.sessionId ?? 'e1' }
-        update((s) => ({ waste: [...s.waste, record], products: changeStock(s.products, entry.productId, -entry.qty) }))
+        if (!product) return 'Product not found'
+        if (entry.qty > product.stock) return `Only ${product.stock} ${product.name} in stock`
         if (live()) {
-          save('Waste entry', async () => {
+          try {
             const saved = await postWaste({ product_id: entry.productId, qty: entry.qty, reason: entry.reason, notes: entry.notes })
-            update((s) => ({ waste: s.waste.map((w) => (w.id === tempId ? saved.entry : w)) }))
+            update((s) => ({ waste: [...s.waste, saved.entry] }))
             replaceProduct(saved.product)
-          })
+          } catch (error) {
+            return apiErrorMessage(error)
+          }
+          return null
         }
+        const record: WasteEntry = { ...entry, id: uid('w'), value: product.cost * entry.qty, date: new Date().toISOString(), by: stateRef.current.sessionId ?? 'e1' }
+        update((s) => ({ waste: [...s.waste, record], products: changeStock(s.products, entry.productId, -entry.qty) }))
+        return null
       },
       markdown: (productId: string, percent: number) => {
         const product = stateRef.current.products.find((p) => p.id === productId)
@@ -504,22 +509,48 @@ function useStoreValue() {
           })
         }
       },
-      setRequestStatus: (ids: string[], status: RequestStatus) => {
+      /** Resolves once the server has the change (live mode), so a screen that lists requests from the server can reload. */
+      async setRequestStatus(ids: string[], status: RequestStatus): Promise<void> {
         update((s) => ({ requests: s.requests.map((r) => (ids.includes(r.id) ? { ...r, status } : r)) }))
-        if (live()) save('Request status', () => patchRequestStatus(ids, status))
+        if (!live()) return
+        try { await patchRequestStatus(ids, status) } catch (error) {
+          toast(`Request status was not saved: ${apiErrorMessage(error)}`, 'error')
+          void refreshLive()
+        }
       },
 
       // ----- People -----
-      saveEmployee: (employee: Employee) => {
+      async saveEmployee(employee: Employee): Promise<void> {
         const isNew = !stateRef.current.employees.some((e) => e.id === employee.id)
         update((s) => ({ employees: isNew ? [...s.employees, employee] : s.employees.map((e) => (e.id === employee.id ? employee : e)) }))
-        if (live()) {
-          save(employee.name, async () => {
-            const body = { name: employee.name, email: employee.email, status: employee.status }
-            const saved = isNew ? await postEmployee(body) : await putEmployee(employee.id, body)
-            update((s) => ({ employees: s.employees.map((e) => (e.id === employee.id ? saved : e)) }))
-          })
+        if (!live()) return
+        try {
+          const body = { name: employee.name, email: employee.email, status: employee.status }
+          const { endedShiftOn, ...saved } = (isNew ? await postEmployee(body) : await putEmployee(employee.id, body)) as Employee & { endedShiftOn?: string | null }
+          update((s) => ({ employees: s.employees.map((e) => (e.id === employee.id ? saved : e)) }))
+          if (endedShiftOn) toast(`${saved.name} deactivated. Shift ended; ${endedShiftOn} is locked.`)
+        } catch (error) {
+          toast(`${employee.name} was not saved: ${apiErrorMessage(error)}`, 'error')
+          void refreshLive()
         }
+      },
+      /** Turns an employee on or off. Turning a cashier off also ends their open shift, which locks the terminal they were on. */
+      async setEmployeeActive(employeeId: string, active: boolean): Promise<string | null> {
+        const current = stateRef.current.employees.find((e) => e.id === employeeId)
+        if (!current) return 'Employee not found'
+        if (live()) {
+          try {
+            const { endedShiftOn, ...saved } = await postEmployeeActive(employeeId, active)
+            update((s) => ({ employees: s.employees.map((e) => (e.id === employeeId ? saved : e)) }))
+            toast(active ? `${saved.name} is active again` : endedShiftOn ? `${saved.name} deactivated. Shift ended; ${endedShiftOn} is locked.` : `${saved.name} deactivated`)
+          } catch (error) {
+            return apiErrorMessage(error)
+          }
+          return null
+        }
+        update((s) => ({ employees: s.employees.map((e) => (e.id === employeeId ? { ...e, status: active ? 'Active' : 'Inactive' } : e)) }))
+        toast(active ? `${current.name} is active again` : `${current.name} deactivated`)
+        return null
       },
 
       // ----- Shift / drawer (kept on this PC for now) -----

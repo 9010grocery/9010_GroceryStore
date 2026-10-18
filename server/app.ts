@@ -5,11 +5,14 @@ import { errorHandler, notFoundHandler } from './middleware/errorHandler.js'
 import { adminRoutes } from './routes/admin.routes.js'
 import { authRoutes } from './routes/auth.routes.js'
 import { dashboardRoutes } from './routes/dashboard.routes.js'
+import { employeeRoutes } from './routes/employees.routes.js'
 import { healthRoutes } from './routes/health.routes.js'
 import { inventoryRoutes } from './routes/inventory.routes.js'
 import { posRoutes } from './routes/pos.routes.js'
+import { requestRoutes } from './routes/requests.routes.js'
 import { storeRoutes } from './routes/store.routes.js'
 import { terminalRoutes } from './routes/terminal.routes.js'
+import { wasteRoutes } from './routes/waste.routes.js'
 
 /** Builds the Express app without starting it, so tests can mount it directly. */
 export function createApp(options: { appVersion: string }): Express {
@@ -34,6 +37,9 @@ export function createApp(options: { appVersion: string }): Express {
   app.use('/api/pos', posRoutes)
   app.use('/api/inventory', inventoryRoutes)
   app.use('/api/dashboard', dashboardRoutes)
+  app.use('/api/waste', wasteRoutes)
+  app.use('/api/requests', requestRoutes)
+  app.use('/api/employees', employeeRoutes)
 
   app.use('/api', notFoundHandler)
   app.use(errorHandler)

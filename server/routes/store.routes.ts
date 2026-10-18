@@ -3,16 +3,12 @@ import { z } from 'zod'
 import { requireOwnerPin } from '../middleware/ownerPin.js'
 import { actorFor, requireOwnerUser, requireStoreUser } from '../middleware/storeAuth.js'
 import {
-  addRequest,
   adjustProductStock,
   createSale,
   loadSnapshot,
-  logWaste,
   refundSale,
   saveBusinessInfo,
-  saveEmployee,
   saveProduct,
-  setRequestStatus,
   voidSale,
 } from '../services/store.service.js'
 import { prefixedId as id } from '../utils/ids.js'
@@ -68,10 +64,6 @@ const productBody = z.object({
 })
 
 const stockBody = z.object({ delta: z.number().int().refine((n) => n !== 0, 'Change must not be zero'), reason: text(255).default('') })
-const wasteBody = z.object({ product_id: id('p'), qty, reason: z.enum(['Expired', 'Damaged', 'Spoiled', 'Theft / Shrink', 'Customer return', 'Other']), notes: text(255).nullish() })
-const requestBody = z.object({ item: text(100).min(1, 'What did the customer ask for?'), category: text(50).nullish(), requested_by: text(100).nullish(), contact: text(100).nullish(), notes: text(255).nullish() })
-const requestStatusBody = z.object({ ids: z.array(id('q')).min(1).max(1000), status: z.enum(['New', 'Reviewing', 'Ordered', 'Stocked', 'Declined']) })
-const employeeBody = z.object({ name: text(101).min(1, 'Name is required'), email: text(100).nullish(), status: z.enum(['Active', 'On leave', 'Inactive']) })
 
 storeRoutes.get('/snapshot', async (_req, res) => {
   res.set('Cache-Control', 'no-store')
@@ -98,22 +90,6 @@ storeRoutes.post('/sales/:id/refunds', requireOwnerPin('refund'), async (req, re
   req.auditLogged = true
   const transaction = await refundSale(await actorFor(req), req.ownerApproval!, routeId(req, 't'), body)
   res.status(201).json({ transaction, approved_by: req.ownerApproval!.owner_name })
-})
-
-storeRoutes.post('/waste', async (req, res) => {
-  const body = wasteBody.parse(req.body)
-  req.auditLogged = true
-  res.status(201).json(await logWaste(await actorFor(req), body))
-})
-
-storeRoutes.post('/requests', async (req, res) => {
-  const body = requestBody.parse(req.body)
-  res.status(201).json(await addRequest(await actorFor(req), body))
-})
-
-storeRoutes.patch('/requests/status', requireOwnerUser, async (req, res) => {
-  const { ids, status } = requestStatusBody.parse(req.body)
-  res.json(await setRequestStatus(await actorFor(req), ids, status))
 })
 
 storeRoutes.post('/products', requireOwnerUser, async (req, res) => {
@@ -147,16 +123,4 @@ storeRoutes.put('/settings', requireOwnerUser, async (req, res) => {
   req.auditLogged = true
   await saveBusinessInfo(await actorFor(req), body)
   res.json({ ok: true })
-})
-
-storeRoutes.post('/employees', requireOwnerUser, async (req, res) => {
-  const body = employeeBody.parse(req.body)
-  req.auditLogged = true
-  res.status(201).json(await saveEmployee(await actorFor(req), null, body))
-})
-
-storeRoutes.put('/employees/:id', requireOwnerUser, async (req, res) => {
-  const body = employeeBody.parse(req.body)
-  req.auditLogged = true
-  res.json(await saveEmployee(await actorFor(req), routeId(req, 'u'), body))
 })
