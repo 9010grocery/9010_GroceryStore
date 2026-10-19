@@ -325,13 +325,42 @@ export const postRefund = (id: string, owner_pin: string, body: { reason: string
 export const postProduct = (product: ProductPayload) => api.post<StoreProduct>('/api/store/products', product).then((r) => r.data)
 export const putProduct = (id: string, product: ProductPayload) => api.put<StoreProduct>(`/api/store/products/${id}`, product).then((r) => r.data)
 export const postStockChange = (id: string, delta: number, reason: string) => api.post<StoreProduct>(`/api/store/products/${id}/stock`, { delta, reason }).then((r) => r.data)
+export interface WasteRow { id: string; productId: string; name: string; unit: string; qty: number; reason: WasteReason; value: number; date: string; by: string; byName: string; notes: string }
+export interface WasteFilterParams { from?: string; to?: string; product_id?: string; reason?: WasteReason }
+export interface WasteList { entries: WasteRow[]; total: { entries: number; qty: number; value: number }; hasMore: boolean }
+export interface WasteSummary {
+  totalValue: number; totalQty: number; entries: number; sales: number; shrinkRatePercent: number
+  byReason: { reason: WasteReason; entries: number; qty: number; value: number }[]
+  topProducts: { productId: string; name: string; qty: number; value: number }[]
+}
+const clean = <T extends object>(params: T) => Object.fromEntries(Object.entries(params).filter(([, v]) => v !== undefined && v !== ''))
+export const getWaste = (filters: WasteFilterParams & { limit?: number; offset?: number }) => api.get<WasteList>('/api/waste', { params: clean(filters) }).then((r) => r.data)
+export const getWasteSummary = (filters: WasteFilterParams) => api.get<WasteSummary>('/api/waste/summary', { params: clean(filters) }).then((r) => r.data)
 export const postWaste = (entry: { product_id: string; qty: number; reason: WasteReason; notes: string }) =>
-  api.post<{ entry: WasteEntry; product: StoreProduct }>('/api/store/waste', entry).then((r) => r.data)
+  api.post<{ entry: WasteEntry; product: StoreProduct }>('/api/waste', entry).then((r) => r.data)
+
+export interface RequestsSummary { total: number; open: number; byStatus: Record<RequestStatus, number>; topItems: { item: string; count: number; open: number; latest: string }[] }
+export const getRequests = (filters: { status?: 'Open' | 'All' | RequestStatus; q?: string; from?: string; to?: string }) => api.get<CustomerRequest[]>('/api/requests', { params: clean(filters) }).then((r) => r.data)
+export const getRequestsSummary = (days = 30) => api.get<RequestsSummary>('/api/requests/summary', { params: { days } }).then((r) => r.data)
 export const postRequest = (request: { item: string; category: string; requested_by: string; contact: string; notes: string }) =>
-  api.post<CustomerRequest>('/api/store/requests', request).then((r) => r.data)
-export const patchRequestStatus = (ids: string[], status: RequestStatus) => api.patch<CustomerRequest[]>('/api/store/requests/status', { ids, status }).then((r) => r.data)
-export const postEmployee = (employee: { name: string; email: string; status: Employee['status'] }) => api.post<Employee>('/api/store/employees', employee).then((r) => r.data)
-export const putEmployee = (id: string, employee: { name: string; email: string; status: Employee['status'] }) => api.put<Employee>(`/api/store/employees/${id}`, employee).then((r) => r.data)
+  api.post<CustomerRequest>('/api/requests', request).then((r) => r.data)
+export const patchRequestStatus = (ids: string[], status: RequestStatus) => api.patch<CustomerRequest[]>('/api/requests/status', { ids, status }).then((r) => r.data)
+export const putRequest = (id: string, changes: { status?: RequestStatus; notes?: string }) => api.put<CustomerRequest>(`/api/requests/${id}`, changes).then((r) => r.data)
+
+export type EmployeeRow = Employee & { receiptsWeek: number; salesWeek: number; onTerminal: string | null }
+export interface EmployeeActivity {
+  employee: Employee
+  days: number
+  totals: { receipts: number; sales: number; voids: number; voidAmount: number; refunds: number; refundAmount: number; discounts: number }
+  sessions: { id: string; terminalId: string; start: string; end: string | null; active: boolean; endReason: string | null; receipts: number; sales: number }[]
+  recentVoids: { receipt: string; amount: number; reason: string; at: string }[]
+}
+type EmployeeBody = { name: string; email: string; status: Employee['status'] }
+export const getEmployees = () => api.get<EmployeeRow[]>('/api/employees').then((r) => r.data)
+export const getEmployeeActivity = (id: string, days = 30) => api.get<EmployeeActivity>(`/api/employees/${id}/activity`, { params: { days } }).then((r) => r.data)
+export const postEmployee = (employee: EmployeeBody) => api.post<Employee>('/api/employees', employee).then((r) => r.data)
+export const putEmployee = (id: string, employee: EmployeeBody) => api.put<Employee>(`/api/employees/${id}`, employee).then((r) => r.data)
+export const postEmployeeActive = (id: string, active: boolean) => api.post<Employee & { endedShiftOn: string | null }>(`/api/employees/${id}/${active ? 'activate' : 'deactivate'}`).then((r) => r.data)
 
 // ---------------------------------------------------------------------------
 // Import from the old system — server/services/import.service.ts
@@ -403,10 +432,6 @@ export interface ReceivePayload {
 }
 
 export const postReceive = (delivery: ReceivePayload) => api.post<StoreProduct>('/api/inventory/receive', delivery).then((r) => r.data)
-export interface BatchRow { batchId: string; batchNumber: string | null; expiry: string | null; daysLeft: number | null; qty: number; markdownPercent: number | null }
-export const getBatches = (productId: string) => api.get<BatchRow[]>(`/api/inventory/batches/${productId}`).then((r) => r.data)
-export const putBatchMarkdown = (batchId: string, percent: number | null) => api.put<{ ok: true }>(`/api/inventory/batches/${batchId}/markdown`, { percent }).then((r) => r.data)
-export const putBatchExpiry = (batchId: string, expiry: string | null) => api.put<{ ok: true }>(`/api/inventory/batches/${batchId}/expiry`, { expiry_date: expiry }).then((r) => r.data)
 export const deleteStoreProduct = (id: string) => api.delete<{ ok: true; id: string }>(`/api/inventory/products/${id}`).then((r) => r.data)
 
 export interface StockMovement {
@@ -461,3 +486,21 @@ export interface SalesTrend {
 export const getDashboardSummary = (expiryDays: number) => api.get<DashboardSummary>('/api/dashboard/summary', { params: { expiry_days: expiryDays } }).then((r) => r.data)
 export const getDashboardAlerts = (expiryDays: number) => api.get<DashboardAlerts>('/api/dashboard/alerts', { params: { expiry_days: expiryDays } }).then((r) => r.data)
 export const getSalesTrend = (days = 7) => api.get<SalesTrend>('/api/dashboard/sales-trend', { params: { days } }).then((r) => r.data)
+
+// ---------------------------------------------------------------------------
+// Batches (near-expiry markdown and expiry dates) — server/routes/inventory.routes.ts
+// ---------------------------------------------------------------------------
+
+export interface BatchRow {
+  batchId: string
+  batchNumber: string | null
+  /** YYYY-MM-DD, or null when no expiry date was entered. */
+  expiry: string | null
+  daysLeft: number | null
+  qty: number
+  /** Percent off for this batch, or null for full price. */
+  markdownPercent: number | null
+}
+export const getBatches = (productId: string) => api.get<BatchRow[]>(`/api/inventory/batches/${productId}`).then((r) => r.data)
+export const putBatchMarkdown = (batchId: string, percent: number | null) => api.put(`/api/inventory/batches/${batchId}/markdown`, { percent }).then((r) => r.data)
+export const putBatchExpiry = (batchId: string, expiry_date: string | null) => api.put(`/api/inventory/batches/${batchId}/expiry`, { expiry_date }).then((r) => r.data)

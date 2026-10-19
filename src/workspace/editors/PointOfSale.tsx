@@ -1,6 +1,6 @@
 import { Fragment, useMemo, useRef, useState } from 'react'
 import { OwnerPinModal } from '../../components/OwnerPinModal'
-import type { PaymentMethod, Transaction } from '../../data/types'
+import type { CustomerRequest, PaymentMethod, Transaction } from '../../data/types'
 import { basketRules } from '../../lib/ai'
 import { peso, shortDate, time } from '../../lib/format'
 import { batchMarkdown, batchMarkdownUnits, computeTotals, quickCashOptions } from '../../lib/pos'
@@ -9,9 +9,11 @@ import { useScannerWedge } from '../../hooks/useScannerWedge'
 import { apiErrorMessage, postDiscountVerify } from '../../services/api'
 import { useCurrentUser, useStore } from '../../store/StoreContext'
 import { Field, Modal, Segmented } from '../ui'
+import { RequestFields } from './Operations'
 
 export function ProductGrid() {
   const { state, actions } = useStore()
+  const user = useCurrentUser()
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('All items')
   const inputRef = useRef<HTMLInputElement>(null)
@@ -21,6 +23,7 @@ export function ProductGrid() {
   const q = query.trim().toLowerCase()
   const filtered = products.filter((p) => (category === 'All items' || p.category === category) && (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase() === q || p.barcode.includes(q)))
   const inCart = new Map(state.cart.map((l) => [l.productId, l.qty]))
+  const [requesting, setRequesting] = useState<Omit<CustomerRequest, 'id' | 'date' | 'status'> | null>(null)
 
   function add(productId: string) {
     const product = state.products.find((p) => p.id === productId)
@@ -60,7 +63,10 @@ export function ProductGrid() {
       <span className="product-info"><b>{product.name}</b><span>{peso(product.price)}{product.promoPercent ? <i className="product-promo-badge">PROMO −{product.promoPercent}%</i> : null}</span><small className={product.stock <= product.reorderPoint ? 'stock-low' : ''}>{product.stock <= 0 ? 'Out of stock' : `${product.stock} in stock`}</small></span>
       {inCart.has(product.id) ? <span className="product-add in-cart">{inCart.get(product.id)}</span> : <span className="product-add">+</span>}
     </button>)}</div>
-    <div className="results-count">SHOWING {filtered.length} OF {products.length} PRODUCTS <button onClick={() => actions.navigate('Inventory')}>MANAGE CATALOG ↗</button></div>
+    <div className="results-count">SHOWING {filtered.length} OF {products.length} PRODUCTS <span className="results-actions"><button className="request-item-button" onClick={() => setRequesting({ item: q.length > 1 ? query.trim() : '', category: 'Pantry', requestedBy: 'Walk-in', contact: '', notes: '' })}>＋ REQUEST ITEM</button>{user?.role !== 'Cashier' && <button onClick={() => actions.navigate('Inventory')}>MANAGE CATALOG ↗</button>}</span></div>
+    {requesting && <Modal title="Customer asked for an item" eyebrow="NOT ON THE SHELF?" onClose={() => setRequesting(null)} footer={<><button className="outline-button" onClick={() => setRequesting(null)}>CANCEL</button><button className="primary-button" disabled={!requesting.item.trim()} onClick={() => { actions.addRequest(requesting); actions.toast('Request sent to the owner'); setRequesting(null) }}>SEND REQUEST</button></>}>
+      <RequestFields value={requesting} onChange={setRequesting} />
+    </Modal>}
   </div>
 }
 
