@@ -295,7 +295,7 @@ export async function loadTransaction(db: Db, transactionId: number) {
   return txn
 }
 
-async function loadWaste(db: Db, where = 'w.waste_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)', params: unknown[] = []) {
+export async function loadWaste(db: Db, where = 'w.waste_date >= DATE_SUB(CURDATE(), INTERVAL 90 DAY)', params: unknown[] = []) {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT w.*, p.cost_price FROM waste_records w JOIN products p ON p.product_id = w.product_id WHERE ${where} ORDER BY w.waste_date, w.waste_id`,
     params,
@@ -312,7 +312,7 @@ async function loadWaste(db: Db, where = 'w.waste_date >= DATE_SUB(CURDATE(), IN
   }))
 }
 
-async function loadRequests(db: Db, where = '1 = 1', params: unknown[] = []) {
+export async function loadRequests(db: Db, where = '1 = 1', params: unknown[] = []) {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT q.*, CONCAT(u.first_name, ' ', u.last_name) AS cashier_name
        FROM customer_requests q LEFT JOIN users u ON u.user_id = q.cashier_id
@@ -331,7 +331,7 @@ async function loadRequests(db: Db, where = '1 = 1', params: unknown[] = []) {
   }))
 }
 
-async function loadEmployees(db: Db, userId?: number) {
+export async function loadEmployees(db: Db, userId?: number) {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT u.user_id, u.first_name, u.last_name, u.email, u.phone, u.is_active, u.on_leave, u.last_login, u.created_at, r.role_name,
             (SELECT MAX(s.assigned_at) FROM sessions s WHERE s.user_id = u.user_id) AS last_session,
@@ -934,7 +934,8 @@ export async function logWaste(actor: Actor, input: { product_id: number; qty: n
   const wasteId = await withTransaction(async (connection) => {
     const [rows] = await connection.query<RowDataPacket[]>('SELECT product_name FROM products WHERE product_id = ? AND deleted_at IS NULL', [input.product_id])
     if (!rows[0]) throw HttpError.notFound('Product not found')
-    const inventoryId = await changeStock(connection, input.product_id, -input.qty, { user_id: actor.user_id, session_id: actor.session_id, type: 'waste', reason: input.reason })
+    // A write-off can't be bigger than what is on hand (409 with the available quantity).
+    const inventoryId = await changeStock(connection, input.product_id, -input.qty, { user_id: actor.user_id, session_id: actor.session_id, type: 'waste', reason: input.reason, strict: { productName: rows[0].product_name as string } })
     const [result] = await connection.execute<ResultSetHeader>(
       'INSERT INTO waste_records (product_id, inventory_id, user_id, quantity, reason, notes) VALUES (?, ?, ?, ?, ?, ?)',
       [input.product_id, inventoryId, actor.user_id, input.qty, WASTE_TO_DB[input.reason], input.notes?.trim().slice(0, 255) || null],
@@ -961,6 +962,20 @@ export async function setRequestStatus(actor: Actor, ids: number[], status: Requ
   return loadRequests(getPool(), 'q.request_id IN (?)', [ids])
 }
 
+/** Owner edits one request: its status and/or notes. */
+export async function updateRequest(actor: Actor, requestId: number, input: { status?: RequestStatusUi; notes?: string | null }) {
+  const [found] = await getPool().query<RowDataPacket[]>('SELECT request_id FROM customer_requests WHERE request_id = ?', [requestId])
+  if (!found[0]) throw HttpError.notFound('Request not found')
+  const sets: string[] = ['reviewed_by = ?', 'reviewed_at = NOW()']
+  const params: unknown[] = [actor.user_id]
+  if (input.status) { sets.push('status = ?'); params.push(REQUEST_TO_DB[input.status]) }
+  if (input.notes !== undefined) { sets.push('notes = ?'); params.push(input.notes?.trim() || null) }
+  await getPool().execute(`UPDATE customer_requests SET ${sets.join(', ')} WHERE request_id = ?`, [...params, requestId] as never[])
+  await logAudit({ user_id: actor.user_id, session_id: actor.session_id, terminal_id: actor.terminal_id, ip_address: actor.ip_address, action: 'UPDATE_REQUEST', module: 'REQUESTS', details: { request_id: requestId, status: input.status ?? null } })
+  const [request] = await loadRequests(getPool(), 'q.request_id = ?', [requestId])
+  return request
+}
+
 /** Splits "Juan Dela Cruz" into first "Juan" and last "Dela Cruz" for the users table. */
 export function splitName(name: string): { first: string; last: string } {
   const parts = name.trim().split(/\s+/)
@@ -977,6 +992,7 @@ export async function saveEmployee(actor: Actor, userId: number | null, input: {
   const email = input.email?.trim() || null
   const isActive = input.status !== 'Inactive'
   const onLeave = input.status === 'On leave'
+  let endedOn: string | null = null
   const id = await withTransaction(async (connection) => {
     let savedId = userId
     if (savedId === null) {
@@ -989,17 +1005,25 @@ export async function saveEmployee(actor: Actor, userId: number | null, input: {
       const [rows] = await connection.query<RowDataPacket[]>('SELECT r.role_name FROM users u JOIN roles r ON r.role_id = u.role_id WHERE u.user_id = ? FOR UPDATE', [savedId])
       if (!rows[0]) throw HttpError.notFound('Employee not found')
       if (rows[0].role_name === 'Owner' && !isActive) throw HttpError.conflict("The owner account can't be deactivated here")
-      if (!isActive) {
-        const [busy] = await connection.query<RowDataPacket[]>('SELECT terminal_id FROM sessions WHERE user_id = ? AND is_active = TRUE AND terminal_id <> ?', [savedId, SYSTEM_TERMINAL_ID])
-        if (busy.length) throw HttpError.conflict(`End this cashier's shift on ${busy[0].terminal_id} first`)
-      }
+      if (!isActive) endedOn = await endActiveShifts(connection, actor, savedId, 'deactivated')
       await connection.execute('UPDATE users SET first_name = ?, last_name = ?, email = ?, is_active = ?, on_leave = ? WHERE user_id = ?', [first, last, email, isActive, onLeave, savedId])
     }
     await logAudit({ user_id: actor.user_id, session_id: actor.session_id, terminal_id: actor.terminal_id, ip_address: actor.ip_address, action: userId === null ? 'CREATE_EMPLOYEE' : 'UPDATE_EMPLOYEE', module: 'ADMIN', details: { employee_id: savedId, name: input.name, status: input.status } }, connection)
     return savedId!
   })
   const [employee] = await loadEmployees(getPool(), id)
-  return employee
+  // endedShiftOn: the terminal that was locked because this cashier was deactivated while on shift.
+  return { ...employee, endedShiftOn: endedOn }
+}
+
+/** Ends the cashier's open shift (if any) so their terminal locks on its next poll. Returns the terminal it was on. */
+async function endActiveShifts(connection: PoolConnection, actor: Actor, userId: number, reason: string): Promise<string | null> {
+  const [open] = await connection.query<RowDataPacket[]>('SELECT session_id, terminal_id FROM sessions WHERE user_id = ? AND is_active = TRUE AND terminal_id <> ? FOR UPDATE', [userId, SYSTEM_TERMINAL_ID])
+  for (const row of open) {
+    await connection.execute('UPDATE sessions SET is_active = FALSE, logout_time = NOW(), end_reason = ? WHERE session_id = ?', [reason, row.session_id])
+    await logAudit({ user_id: actor.user_id, session_id: row.session_id, terminal_id: row.terminal_id, ip_address: actor.ip_address, action: 'END_SHIFT', module: 'ADMIN', details: { cashier_id: userId, via: reason } }, connection)
+  }
+  return open[0]?.terminal_id ?? null
 }
 
 export { productNumber }

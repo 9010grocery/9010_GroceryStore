@@ -1,0 +1,26 @@
+/* Step 4: waste filters, request counts, employee actions, POS request button. */
+
+.filter-bar { display: flex; flex-wrap: wrap; align-items: flex-end; gap: 10px 12px; margin: 0 0 12px; padding: 10px 12px; border: 1px solid #3a3e37; border-radius: 3px; background: #23261f; }
+.filter-field { display: grid; gap: 4px; min-width: 130px; }
+.filter-field > span { font: 800 8px 'Space Grotesk', sans-serif; letter-spacing: .1em; color: #8b9186; }
+.filter-field input, .filter-field select { min-height: 32px; padding: 0 8px; border: 1px solid #4a5047; border-radius: 2px; color: var(--paper); background: #2c302a; font: 600 11px 'Space Grotesk', sans-serif; color-scheme: dark; }
+.filter-presets { display: flex; gap: 6px; }
+.filter-presets .outline-button { min-height: 32px; }
+
+.form-error { margin: 6px 0; color: var(--red); font-size: 11px; }
+
+.status-chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 0 0 12px; }
+.status-chip { padding: 5px 10px; border: 1px solid #4a5047; border-radius: 999px; color: #b8bdb2; background: #2c302a; font: 700 9px 'Space Grotesk', sans-serif; letter-spacing: .06em; text-transform: uppercase; }
+.status-chip b { margin-right: 4px; color: var(--paper); font-size: 11px; }
+.status-chip.new b { color: var(--orange); }
+.status-chip.stocked b { color: var(--green); }
+.status-chip.declined b { color: var(--red); }
+
+.on-terminal { display: block; margin-top: 2px; color: var(--green); font-weight: 700; }
+.data-table td.employee-actions { width: 104px; padding-left: 4px; }
+.employee-actions > div { display: grid; gap: 4px; }
+.employee-actions .outline-button, .employee-actions .danger-button { width: 100%; min-height: 26px; padding: 0 8px; white-space: nowrap; }
+
+.results-actions { display: inline-flex; gap: 8px; margin-left: 8px; }
+.request-item-button { min-height: 26px; padding: 0 10px; border: 1px solid #4a5047; border-radius: 2px; color: var(--paper); background: #2c302a; font: 800 9px 'Space Grotesk', sans-serif; letter-spacing: .06em; cursor: pointer; }
+.request-item-button:hover { border-color: var(--green); color: var(--green); }
