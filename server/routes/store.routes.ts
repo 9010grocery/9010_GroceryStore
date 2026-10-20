@@ -65,9 +65,11 @@ const productBody = z.object({
 
 const stockBody = z.object({ delta: z.number().int().refine((n) => n !== 0, 'Change must not be zero'), reason: text(255).default('') })
 
-storeRoutes.get('/snapshot', async (_req, res) => {
+storeRoutes.get('/snapshot', async (req, res) => {
   res.set('Cache-Control', 'no-store')
-  res.json(await loadSnapshot())
+  const snapshot = await loadSnapshot()
+  // Supplier orders are the owner's business; a cashier terminal gets none.
+  res.json(req.terminalSession ? { ...snapshot, purchaseOrders: [] } : snapshot)
 })
 
 storeRoutes.post('/sales', async (req, res) => {

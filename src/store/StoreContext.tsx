@@ -1,11 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { allWorkspaces, colorForCategory, defaultSettings, emptyStoreData, OWNER_ONLY_WORKSPACES, type StoreData } from '../data/defaults'
 import type {
-  CartDiscount, CartLine, CustomerRequest, CustomerType, Employee, HeldCart, PaymentMethod, Product, PurchaseOrder, RequestStatus, Role, Settings, Transaction, WasteEntry, WasteReason, WorkspaceName,
+  CartDiscount, CartLine, CustomerRequest, CustomerType, Employee, HeldCart, PaymentMethod, Product, RequestStatus, Role, Settings, Transaction, WasteEntry, WasteReason, WorkspaceName,
 } from '../data/types'
 import { actingTerminalId } from '../lib/actingTerminal'
 import { abcClasses, analyseProduct, buildInsights, type Insight, type ProductAnalysis } from '../lib/ai'
-import { DAY_MS, dateKey } from '../lib/format'
+import { dateKey } from '../lib/format'
 import { computeTotals } from '../lib/pos'
 import {
   apiErrorDetails, apiErrorMessage, apiStatus, deleteStoreProduct, getAuthStatus, getReceipt, getStoreSnapshot, patchRequestStatus, postEmployee, postEmployeeActive, postProduct, postReceive, postRefund,
@@ -148,7 +148,7 @@ function applySnapshot(s: StoreState, snap: StoreSnapshot): Partial<StoreState> 
     cart: firstLoad ? [] : keepLines(s.cart),
     discount: firstLoad ? null : s.discount,
     heldCarts: firstLoad ? [] : s.heldCarts.map((h) => ({ ...h, lines: keepLines(h.lines) })).filter((h) => h.lines.length),
-    purchaseOrders: firstLoad ? [] : s.purchaseOrders,
+    purchaseOrders: snap.purchaseOrders ?? [],
     ui: {
       ...s.ui,
       forecastProductId: known.has(s.ui.forecastProductId) ? s.ui.forecastProductId : products.find((p) => p.active)?.id ?? s.ui.forecastProductId,
@@ -458,44 +458,6 @@ function useStoreValue() {
         const marked = { ...product, price: Math.round(product.price * (1 - percent) * 4) / 4 }
         update((s) => ({ products: s.products.map((p) => (p.id === productId ? marked : p)) }))
         if (live()) save('Markdown', async () => replaceProduct(await putProduct(productId, toPayload(marked))))
-      },
-
-      // ----- Purchasing (purchase orders are kept on this PC for now; received stock is saved to the server) -----
-      createPurchaseOrders(lines: { productId: string; qty: number }[], source: PurchaseOrder['source']) {
-        update((s) => {
-          const bySupplier = new Map<string, PurchaseOrder['lines']>()
-          for (const line of lines) {
-            const product = s.products.find((p) => p.id === line.productId)
-            if (!product || line.qty <= 0) continue
-            bySupplier.set(product.supplierId, [...(bySupplier.get(product.supplierId) ?? []), { productId: product.id, qty: line.qty, cost: product.cost }])
-          }
-          let sequence = 42 + s.purchaseOrders.length - 2
-          const created: PurchaseOrder[] = [...bySupplier].map(([supplierId, poLines]) => {
-            const lead = Math.max(...poLines.map((l) => s.products.find((p) => p.id === l.productId)?.leadTimeDays ?? 3))
-            sequence++
-            return { id: uid('po'), number: `PO-${new Date().getFullYear()}-${String(sequence).padStart(4, '0')}`, supplierId, created: new Date().toISOString(), expected: new Date(Date.now() + lead * DAY_MS).toISOString(), status: 'Draft', lines: poLines, source }
-          })
-          return { purchaseOrders: [...created, ...s.purchaseOrders] }
-        })
-      },
-      setPurchaseOrderStatus: (id: string, status: PurchaseOrder['status']) => {
-        const po = stateRef.current.purchaseOrders.find((p) => p.id === id)
-        if (!po) return
-        const receiving = status === 'Received' && po.status !== 'Received'
-        update((s) => {
-          let products = s.products
-          if (receiving) {
-            for (const line of po.lines) {
-              products = products.map((p) => (p.id === line.productId ? { ...p, stock: p.stock + line.qty, cost: line.cost } : p))
-            }
-          }
-          return { products, purchaseOrders: s.purchaseOrders.map((p) => (p.id === id ? { ...p, status } : p)) }
-        })
-        if (receiving && live()) {
-          save(`Delivery for ${po.number}`, async () => {
-            for (const line of po.lines) replaceProduct(await postReceive({ product_id: line.productId, qty: line.qty, batch_number: po.number, unit_cost: line.cost, note: `Received ${po.number}` }))
-          })
-        }
       },
 
       // ----- Requests -----

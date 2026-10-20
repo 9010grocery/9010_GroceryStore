@@ -172,7 +172,7 @@ export function analyseProduct(product: Product, history: Record<string, number[
   const weeklyDemand = forecast.forecast[0]
   const dailyDemand = weeklyDemand / 7
   const change = periodChange(weekly)
-  const onOrder = purchaseOrders.filter((po) => po.status === 'Sent' || po.status === 'Draft').flatMap((po) => po.lines).filter((line) => line.productId === product.id).reduce((sum, line) => sum + line.qty, 0)
+  const onOrder = purchaseOrders.filter((po) => po.status === 'Pending' || po.status === 'Partially received').flatMap((po) => po.lines).filter((line) => line.productId === product.id).reduce((sum, line) => sum + Math.max(0, line.qty - line.received), 0)
   const sdDaily = forecast.rmse / Math.sqrt(7)
   const safetyStock = zForService(settings.serviceLevel) * sdDaily * Math.sqrt(product.leadTimeDays)
   const reorderLevel = Math.max(product.reorderPoint, dailyDemand * product.leadTimeDays + safetyStock)

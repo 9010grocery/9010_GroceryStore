@@ -133,15 +133,25 @@ export interface CustomerRequest {
   notes: string
 }
 
+export type PurchaseOrderStatus = 'Pending' | 'Partially received' | 'Completed' | 'Cancelled'
+
 export interface PurchaseOrder {
   id: string
   number: string
+  /** The supplier's name (free text; products name their supplier directly). */
   supplierId: string
   created: string
   expected: string
-  status: 'Draft' | 'Sent' | 'Received' | 'Cancelled'
-  lines: { productId: string; qty: number; cost: number }[]
+  status: PurchaseOrderStatus
+  /** `itemId` is the database row (needed to receive a delivery); `qty` is ordered, `received` is what has arrived. */
+  lines: { itemId?: number; productId: string; name?: string; unit?: string; qty: number; received: number; cost: number }[]
   source: 'AI suggestion' | 'Manual'
+  reorderListId?: string | null
+  notes?: string
+  cancelReason?: string | null
+  completedAt?: string | null
+  createdBy?: string
+  total?: number
 }
 
 export interface CashMovement {
