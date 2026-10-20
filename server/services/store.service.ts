@@ -334,11 +334,14 @@ async function loadRequests(db: Db, where = '1 = 1', params: unknown[] = []) {
 async function loadEmployees(db: Db, userId?: number) {
   const [rows] = await db.query<RowDataPacket[]>(
     `SELECT u.user_id, u.first_name, u.last_name, u.email, u.phone, u.is_active, u.on_leave, u.last_login, u.created_at, r.role_name,
-            (SELECT MAX(s.assigned_at) FROM sessions s WHERE s.user_id = u.user_id) AS last_session
+            (SELECT MAX(s.assigned_at) FROM sessions s WHERE s.user_id = u.user_id) AS last_session,
+            ls.terminal_id AS shift_terminal, ls.assigned_at AS shift_assigned_at, ls.logout_time AS shift_ended_at,
+            ls.is_active AS shift_active, ls.is_paused AS shift_paused, ls.paused_at AS shift_paused_at, ls.end_reason AS shift_end_reason
        FROM users u JOIN roles r ON r.role_id = u.role_id
+       LEFT JOIN sessions ls ON ls.session_id = (SELECT MAX(s2.session_id) FROM sessions s2 WHERE s2.user_id = u.user_id AND s2.terminal_id <> ?)
       ${userId ? 'WHERE u.user_id = ?' : ''}
       ORDER BY u.user_id`,
-    userId ? [userId] : [],
+    userId ? [SYSTEM_TERMINAL_ID, userId] : [SYSTEM_TERMINAL_ID],
   )
   return rows.map((row) => ({
     id: `u${row.user_id}`,
@@ -347,6 +350,15 @@ async function loadEmployees(db: Db, userId?: number) {
     role: row.role_name === 'Owner' ? ('Owner' as const) : ('Cashier' as const),
     status: !row.is_active ? ('Inactive' as const) : row.on_leave ? ('On leave' as const) : ('Active' as const),
     lastActive: toIso([row.last_login, row.last_session].filter(Boolean).sort().pop() ?? row.created_at) ?? '',
+    // The cashier's latest shift on a real terminal: on it now, paused, or ended (and when, and by whom).
+    shift: row.role_name === 'Owner' || !row.shift_terminal ? null : {
+      state: row.shift_active ? (row.shift_paused ? ('paused' as const) : ('on' as const)) : ('ended' as const),
+      terminal: row.shift_terminal as string,
+      startedAt: toIso(row.shift_assigned_at),
+      pausedAt: row.shift_active && row.shift_paused ? toIso(row.shift_paused_at) : null,
+      endedAt: row.shift_active ? null : toIso(row.shift_ended_at),
+      endedBy: row.shift_active ? null : row.shift_end_reason === 'cashier_logout' ? ('cashier' as const) : ('owner' as const),
+    },
   }))
 }
 

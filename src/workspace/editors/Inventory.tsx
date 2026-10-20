@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 import { categories, colorForCategory } from '../../data/defaults'
 import type { Product } from '../../data/types'
 import { compactPeso, dateKey, downloadCsv, num, peso, shortDate, time } from '../../lib/format'
@@ -90,7 +91,11 @@ export function InventoryTable() {
           <td><StatusPill value={statusOf(p)} /></td>
           <td>{p.expiry ? shortDate(p.expiry) : '—'}</td>
           <td>{peso(p.stock * p.cost, 0)}</td>
-          <td className="row-actions">{owner && <button onClick={() => setReceiving(p)} title="Receive delivery">⇩</button>}{owner && <button onClick={() => setBatching(p)} title="Batch discount (near-expiry markdown)">％</button>}<button onClick={() => setAdjusting(p)} title="Count or remove stock">±</button><button onClick={() => setHistory(p)} title="Stock movement history">☰</button><button onClick={() => setEditing(p)} title="Edit product">✎</button><button onClick={() => actions.navigate('AI Insights', { forecastProductId: p.id })} title="Open forecast">⌁</button></td>
+          <td className="row-actions"><button onClick={() => setAdjusting(p)} title="Count or remove stock">±</button><button onClick={() => setEditing(p)} title="Edit product">✎</button><RowMenu items={[
+            ...(owner ? [{ label: 'Receive delivery', run: () => setReceiving(p) }, { label: 'Batch discount', run: () => setBatching(p) }] : []),
+            { label: 'Stock history', run: () => setHistory(p) },
+            { label: 'Open forecast', run: () => actions.navigate('AI Insights', { forecastProductId: p.id }) },
+          ]} /></td>
         </tr>
       })}</tbody></table>
       {rows.length === 0 && <Empty>No products match.</Empty>}
@@ -102,6 +107,45 @@ export function InventoryTable() {
     {history && <MovementsModal product={history} onClose={() => setHistory(null)} />}
     {batching && <BatchesModal product={batching} onClose={() => setBatching(null)} />}
   </div>
+}
+
+/** The less-used row actions, tucked behind one "⋯" button so the table stays readable. */
+function RowMenu({ items }: { items: { label: string; run: () => void }[] }) {
+  const [at, setAt] = useState<{ top: number; left: number } | null>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const menu = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!at) return
+    const close = (event: Event) => {
+      const target = event.target as Node
+      if (!menu.current?.contains(target) && !trigger.current?.contains(target)) setAt(null)
+    }
+    document.addEventListener('pointerdown', close)
+    window.addEventListener('resize', close)
+    window.addEventListener('scroll', close, true)
+    return () => {
+      document.removeEventListener('pointerdown', close)
+      window.removeEventListener('resize', close)
+      window.removeEventListener('scroll', close, true)
+    }
+  }, [at])
+
+  function toggle() {
+    if (at) return setAt(null)
+    const bounds = trigger.current?.getBoundingClientRect()
+    if (!bounds) return
+    const height = items.length * 30 + 10
+    const top = bounds.bottom + 4 + height > window.innerHeight ? bounds.top - height - 4 : bounds.bottom + 4
+    setAt({ top: Math.max(8, top), left: Math.max(8, Math.min(bounds.right - 168, window.innerWidth - 176)) })
+  }
+
+  return <>
+    <button ref={trigger} title="More actions" aria-haspopup="menu" aria-expanded={Boolean(at)} onClick={toggle}>⋯</button>
+    {at && createPortal(<div ref={menu} className="row-menu" role="menu" style={at}>
+      {items.map((item) => <button key={item.label} role="menuitem" onClick={() => { setAt(null); item.run() }}>{item.label}</button>)}
+    </div>, document.body)}
+  </>
 }
 
 function ProductModal({ product, onClose }: { product: Product | null; onClose: () => void }) {

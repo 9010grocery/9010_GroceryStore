@@ -25,6 +25,9 @@ export interface SessionSummary {
   assigned_at: string
   login_time: string | null
   assigned_by: number
+  /** Terminal locked but the shift is still open (see pauseShift). */
+  is_paused: boolean
+  paused_at: string | null
 }
 
 export interface TerminalSummary {
@@ -60,6 +63,8 @@ export interface TerminalStatus {
   user: { user_id: number; name: string } | null
   assigned_at: string | null
   login_time: string | null
+  /** The cashier's shift is paused: the terminal is locked, and only the owner can resume it. */
+  paused: boolean
   /** Sent while assigned; the POS uses it to act on behalf of this session. */
   session_token: string | null
   server_time: string
@@ -68,7 +73,7 @@ export interface TerminalStatus {
 const isDuplicate = (error: unknown) => (error as { code?: string })?.code === 'ER_DUP_ENTRY'
 
 const SESSION_SELECT = `s.session_id, s.user_id, CONCAT(u.first_name, ' ', u.last_name) AS cashier_name, s.terminal_id,
-  s.assigned_at, s.login_time, s.assigned_by`
+  s.assigned_at, s.login_time, s.assigned_by, s.is_paused, s.paused_at`
 
 function toSession(row: RowDataPacket): SessionSummary {
   return {
@@ -79,6 +84,8 @@ function toSession(row: RowDataPacket): SessionSummary {
     assigned_at: row.assigned_at,
     login_time: row.login_time,
     assigned_by: row.assigned_by,
+    is_paused: Boolean(row.is_paused),
+    paused_at: row.paused_at ?? null,
   }
 }
 
@@ -273,16 +280,17 @@ export async function assignTerminal(ownerId: number, userId: number, terminalId
   })
 }
 
-async function endOne(connection: PoolConnection, ownerId: number, session: SessionSummary, info: RequestInfo, via: 'end_shift' | 'lock_all') {
-  await connection.execute("UPDATE sessions SET is_active = FALSE, logout_time = NOW(), end_reason = 'owner_ended' WHERE session_id = ?", [
+async function endOne(connection: PoolConnection, actorId: number, session: SessionSummary, info: RequestInfo, via: 'end_shift' | 'lock_all' | 'cashier') {
+  await connection.execute('UPDATE sessions SET is_active = FALSE, is_paused = FALSE, logout_time = NOW(), end_reason = ? WHERE session_id = ?', [
+    via === 'cashier' ? 'cashier_logout' : 'owner_ended',
     session.session_id,
   ])
   await logAudit(
     {
-      user_id: ownerId,
+      user_id: actorId,
       session_id: session.session_id,
       action: 'END_SHIFT',
-      module: 'ADMIN',
+      module: via === 'cashier' ? 'TERMINAL' : 'ADMIN',
       terminal_id: session.terminal_id,
       ip_address: info.ip_address,
       details: { cashier_id: session.user_id, cashier_name: session.cashier_name, via },
@@ -304,6 +312,69 @@ export async function endShift(ownerId: number, sessionId: number, info: Request
     const session = toSession(row)
     await endOne(connection, ownerId, session, info, 'end_shift')
     return session
+  })
+}
+
+/** The cashier ends their own shift from the terminal; it locks on its next poll and the end time is recorded. */
+export async function endOwnShift(sessionId: number, terminalId: string, info: RequestInfo): Promise<SessionSummary> {
+  return withTransaction(async (connection) => {
+    const [rows] = await connection.query<RowDataPacket[]>(
+      `SELECT ${SESSION_SELECT}, s.is_active FROM sessions s JOIN users u ON u.user_id = s.user_id WHERE s.session_id = ? AND s.terminal_id = ? FOR UPDATE`,
+      [sessionId, terminalId],
+    )
+    const row = rows[0]
+    if (!row) throw HttpError.notFound('Session not found')
+    if (!row.is_active) throw HttpError.conflict('That shift has already ended')
+    const session = toSession(row)
+    await endOne(connection, session.user_id, session, info, 'cashier')
+    return session
+  })
+}
+
+/**
+ * Locks the terminal without ending the shift (cashier stepping away, or the owner locking it). The session stays
+ * active and keeps its cashier; sales are refused until the owner resumes it.
+ */
+export async function pauseShift(actorId: number, sessionId: number, info: RequestInfo, by: 'owner' | 'cashier', terminalId?: string): Promise<SessionSummary> {
+  return withTransaction(async (connection) => {
+    const [rows] = await connection.query<RowDataPacket[]>(
+      `SELECT ${SESSION_SELECT}, s.is_active FROM sessions s JOIN users u ON u.user_id = s.user_id WHERE s.session_id = ? FOR UPDATE`,
+      [sessionId],
+    )
+    const row = rows[0]
+    if (!row || (terminalId && row.terminal_id !== terminalId)) throw HttpError.notFound('Session not found')
+    if (!row.is_active) throw HttpError.conflict('That shift has already ended')
+    if (!row.is_paused) {
+      await connection.execute('UPDATE sessions SET is_paused = TRUE, paused_at = NOW() WHERE session_id = ?', [sessionId])
+      await logAudit(
+        { user_id: actorId, session_id: sessionId, action: 'PAUSE_SHIFT', module: by === 'owner' ? 'ADMIN' : 'TERMINAL', terminal_id: row.terminal_id, ip_address: info.ip_address, details: { cashier_id: row.user_id, cashier_name: row.cashier_name, by } },
+        connection,
+      )
+    }
+    const [after] = await connection.query<RowDataPacket[]>(`SELECT ${SESSION_SELECT} FROM sessions s JOIN users u ON u.user_id = s.user_id WHERE s.session_id = ?`, [sessionId])
+    return toSession(after[0]!)
+  })
+}
+
+/** Owner unlocks a paused terminal; the cashier carries on in the same shift. */
+export async function resumeShift(ownerId: number, sessionId: number, info: RequestInfo): Promise<SessionSummary> {
+  return withTransaction(async (connection) => {
+    const [rows] = await connection.query<RowDataPacket[]>(
+      `SELECT ${SESSION_SELECT}, s.is_active FROM sessions s JOIN users u ON u.user_id = s.user_id WHERE s.session_id = ? FOR UPDATE`,
+      [sessionId],
+    )
+    const row = rows[0]
+    if (!row) throw HttpError.notFound('Session not found')
+    if (!row.is_active) throw HttpError.conflict('That shift has already ended')
+    if (row.is_paused) {
+      await connection.execute('UPDATE sessions SET is_paused = FALSE, paused_at = NULL WHERE session_id = ?', [sessionId])
+      await logAudit(
+        { user_id: ownerId, session_id: sessionId, action: 'RESUME_SHIFT', module: 'ADMIN', terminal_id: row.terminal_id, ip_address: info.ip_address, details: { cashier_id: row.user_id, cashier_name: row.cashier_name } },
+        connection,
+      )
+    }
+    const [after] = await connection.query<RowDataPacket[]>(`SELECT ${SESSION_SELECT} FROM sessions s JOIN users u ON u.user_id = s.user_id WHERE s.session_id = ?`, [sessionId])
+    return toSession(after[0]!)
   })
 }
 
@@ -396,14 +467,16 @@ export async function getTerminalStatus(terminalId: string, info: RequestInfo & 
     }
   }
 
-  const assigned = Boolean(session) && Boolean(terminal.is_active)
+  const paused = Boolean(session?.is_paused) && Boolean(terminal.is_active)
+  const assigned = Boolean(session) && Boolean(terminal.is_active) && !paused
   return {
     terminal_id: terminal.terminal_id,
     terminal_name: terminal.terminal_name,
     assigned,
     is_locked: !assigned,
     session_id: assigned ? session!.session_id : null,
-    user: assigned ? { user_id: session!.user_id, name: session!.cashier_name } : null,
+    paused,
+    user: assigned || paused ? { user_id: session!.user_id, name: session!.cashier_name } : null,
     assigned_at: assigned ? session!.assigned_at : null,
     login_time: assigned ? session!.login_time : null,
     session_token: assigned ? signTerminalToken({ session_id: session!.session_id, terminal_id: terminalId, user_id: session!.user_id }) : null,

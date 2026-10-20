@@ -104,12 +104,23 @@ export function EmployeesPanel() {
   return <div className="module-panel">
     <div className="module-intro"><div><span className="eyebrow">PEOPLE &amp; ACCESS</span><h2>Team members</h2><p>Cashiers have no PIN or password: the owner assigns them to a terminal from the Admin Station. Their role decides which workspaces they see.</p></div>
       <button className="primary-button" onClick={() => setEditing({ id: `e${Date.now().toString(36)}`, name: '', email: '', role: 'Cashier', status: 'Active', lastActive: new Date().toISOString() })}>＋ ADD EMPLOYEE</button></div>
-    <div className="data-table-wrap"><table className="data-table clickable"><thead><tr>{['EMPLOYEE', 'ROLE', 'STATUS', 'SALES (7 DAYS)', 'RECEIPTS', 'LAST ACTIVE'].map((h) => <th key={h}>{h}</th>)}</tr></thead>
+    <div className="data-table-wrap"><table className="data-table clickable"><thead><tr>{['EMPLOYEE', 'ROLE', 'STATUS', 'SHIFT', 'SALES (7 DAYS)', 'RECEIPTS', 'LAST ACTIVE'].map((h) => <th key={h}>{h}</th>)}</tr></thead>
       <tbody>{state.employees.map((e) => { const sales = salesBy(e.id); return <tr key={e.id} onClick={() => setEditing(e)}>
         <td><div className="person-cell"><span className="avatar">{initials(e.name)}</span><div><b>{e.name}</b><small>{e.email}</small></div></div></td>
-        <td>{e.role}</td><td><StatusPill value={e.status} /></td><td>{peso(sales.reduce((s, t) => s + netTotal(t), 0), 0)}</td><td>{sales.length}</td><td>{relativeDay(e.lastActive)}</td></tr> })}</tbody></table></div>
+        <td>{e.role}</td><td><StatusPill value={e.status} /></td><td><ShiftCell employee={e} /></td><td>{peso(sales.reduce((s, t) => s + netTotal(t), 0), 0)}</td><td>{sales.length}</td><td>{relativeDay(e.lastActive)}</td></tr> })}</tbody></table></div>
     {editing && <EmployeeModal employee={editing} isNew={!state.employees.some((e) => e.id === editing.id)} onClose={() => setEditing(null)} onSave={(e) => { actions.saveEmployee(e); actions.toast('Employee saved'); setEditing(null) }} />}
   </div>
+}
+
+/** Where a cashier's latest shift stands: on a terminal, paused, or ended (with the time it ended). */
+function ShiftCell({ employee }: { employee: Employee }) {
+  const shift = employee.shift
+  if (!shift) return <span className="muted-text">{employee.role === 'Owner' ? '—' : 'No shift yet'}</span>
+  const sameDay = (iso: string) => new Date(iso).toDateString() === new Date().toDateString()
+  const stamp = (iso: string | null) => !iso ? '' : sameDay(iso) ? time(iso) : `${new Date(iso).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}, ${time(iso)}`
+  if (shift.state === 'on') return <div><b>On {shift.terminal}</b><small className="shift-sub">since {stamp(shift.startedAt)}</small></div>
+  if (shift.state === 'paused') return <div><b>Paused · {shift.terminal}</b><small className="shift-sub">locked since {stamp(shift.pausedAt)}</small></div>
+  return <div><b>Ended {stamp(shift.endedAt)}</b><small className="shift-sub">{shift.terminal} · {shift.endedBy === 'cashier' ? 'by the cashier' : 'by the owner'}</small></div>
 }
 
 function EmployeeModal({ employee, isNew, onClose, onSave }: { employee: Employee; isNew: boolean; onClose: () => void; onSave: (e: Employee) => void }) {
