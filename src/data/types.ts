@@ -54,6 +54,17 @@ export interface Employee {
   role: Role
   status: 'Active' | 'On leave' | 'Inactive'
   lastActive: string
+  /** A cashier's latest shift on a terminal (live mode only). */
+  shift?: EmployeeShift | null
+}
+
+export interface EmployeeShift {
+  state: 'on' | 'paused' | 'ended'
+  terminal: string
+  startedAt: string | null
+  pausedAt: string | null
+  endedAt: string | null
+  endedBy: 'cashier' | 'owner' | null
 }
 
 export type PaymentMethod = 'Cash' | 'GCash' | 'Card' | 'Maya'

@@ -9,6 +9,8 @@ import {
   getAdminEmployees,
   getAdminTerminals,
   lockAllTerminals,
+  pauseShift,
+  resumeShift,
   updateTerminal,
   type EmployeeSummary,
   type SessionSummary,
@@ -16,7 +18,7 @@ import {
 } from '../services/api'
 import { useStore } from '../store/StoreContext'
 import { DataImportPanel } from '../workspace/editors/DataImport'
-import { Empty, Field, Modal, SectionHeading } from '../workspace/ui'
+import { Empty, Field, Modal } from '../workspace/ui'
 
 const POLL_MS = 3000
 
@@ -169,8 +171,13 @@ export function AdminStationPanel() {
           </header>
           {session ? <>
             <div className="terminal-cashier"><span className="avatar">{initials(session.cashier_name)}</span><div><small>CASHIER</small><b>{session.cashier_name}</b></div></div>
-            <p className="terminal-meta">Since {clock(session.assigned_at)} · {session.login_time ? `unlocked ${clock(session.login_time)}` : 'waiting for terminal to unlock'}</p>
-            <button className="outline-button" disabled={busy !== null} onClick={() => setConfirm({ kind: 'end', session })}>END SHIFT</button>
+            <p className="terminal-meta">{session.is_paused ? `Paused since ${clock(session.paused_at)} · terminal locked` : `Since ${clock(session.assigned_at)} · ${session.login_time ? `unlocked ${clock(session.login_time)}` : 'waiting for terminal to unlock'}`}</p>
+            <div className="terminal-shift-actions">
+              {session.is_paused
+                ? <button className="primary-button" disabled={busy !== null} onClick={() => void run(`resume-${session.session_id}`, async () => { await resumeShift(session.session_id); return `${session.terminal_id} resumed · ${session.cashier_name} is back on shift` })}>RESUME SHIFT</button>
+                : <button className="outline-button" disabled={busy !== null} onClick={() => void run(`pause-${session.session_id}`, async () => { await pauseShift(session.session_id); return `${session.terminal_id} locked · ${session.cashier_name}'s shift paused` })}>PAUSE SHIFT</button>}
+              <button className="outline-button" disabled={busy !== null} onClick={() => setConfirm({ kind: 'end', session })}>END SHIFT</button>
+            </div>
           </> : <>
             <p className="terminal-locked">{terminal.is_active ? 'Locked · waiting for assignment' : 'Terminal disabled'}</p>
             <div className="terminal-assign">
@@ -190,16 +197,6 @@ export function AdminStationPanel() {
       })}
     </div>
 
-    <SectionHeading title={`ACTIVE SESSIONS (${sessions.length})`} />
-    <div className="session-list">
-      {sessions.length === 0 && <p className="muted-text pad">No cashier is on a terminal. All terminals are locked.</p>}
-      {sessions.map((s) => <div className="list-row" key={s.session_id}>
-        <div><b>{s.terminal_id}: {s.cashier_name}</b><small>since {clock(s.assigned_at)} · session #{s.session_id}</small></div>
-        <span>{s.login_time ? 'Unlocked' : 'Unlocking…'}</span>
-        <button className="link-button" disabled={busy !== null} onClick={() => setConfirm({ kind: 'end', session: s })}>END</button>
-      </div>)}
-    </div>
-
     {/* Employees are listed and edited in the Employees panel beside this one; cashiers are assigned on the cards above. */}
     {loaded && cashiers.length === 0 && <Empty>No cashiers yet. Add employees in the Employees panel beside this one.</Empty>}
 
@@ -207,7 +204,7 @@ export function AdminStationPanel() {
       <button className="outline-button" onClick={() => setConfirm(null)}>KEEP</button>
       <button className="danger-button" disabled={busy !== null} onClick={() => { const s = confirm.session; setConfirm(null); void run(`end-${s.session_id}`, async () => { await endShift(s.session_id); return `${s.terminal_id} locked · ${s.cashier_name}'s shift ended` }) }}>END SHIFT</button>
     </>}>
-      <p className="muted-text">{confirm.session.terminal_id} locks and shows “Waiting for owner assignment…”. Sales already made stay recorded under this session.</p>
+      <p className="muted-text">{confirm.session.terminal_id} locks and shows “Waiting for owner assignment…”. The end time is recorded in the Employees table, and sales already made stay recorded under this session. To lock it only for a while, use Pause shift instead.</p>
     </Modal>}
 
     {confirm?.kind === 'lock-all' && <Modal title="Lock all terminals?" eyebrow="END ALL SHIFTS" onClose={() => setConfirm(null)} footer={<>

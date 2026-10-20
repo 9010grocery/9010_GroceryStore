@@ -28,10 +28,11 @@ export const requireStoreUser: RequestHandler = async (req, _res, next) => {
   if (!sessionToken) throw HttpError.unauthorized()
   const claims = verifyTerminalToken(sessionToken)
   const [rows] = await getPool().query<RowDataPacket[]>(
-    'SELECT 1 FROM sessions WHERE session_id = ? AND terminal_id = ? AND user_id = ? AND is_active = TRUE',
+    'SELECT is_paused FROM sessions WHERE session_id = ? AND terminal_id = ? AND user_id = ? AND is_active = TRUE',
     [claims.session_id, claims.terminal_id, claims.user_id],
   )
   if (!rows.length) throw HttpError.unauthorized('This shift has ended. Wait for the owner to assign a cashier.')
+  if (rows[0]!.is_paused) throw HttpError.unauthorized('This shift is paused. Ask the owner to resume it.')
   req.terminalSession = claims
   next()
 }

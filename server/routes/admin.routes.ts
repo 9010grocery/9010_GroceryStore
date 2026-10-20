@@ -9,6 +9,8 @@ import {
   createTerminal,
   deleteTerminal,
   endShift,
+  pauseShift,
+  resumeShift,
   listActiveSessions,
   listEmployees,
   listTerminals,
@@ -82,6 +84,20 @@ adminRoutes.post('/end-shift', async (req, res) => {
   req.auditLogged = true
   const session = await endShift(req.user!.user_id, session_id, { ip_address: clientIp(req) })
   res.json({ ok: true, session })
+})
+
+/** Body: { session_id } — locks the terminal but keeps the shift open. */
+adminRoutes.post('/pause-shift', async (req, res) => {
+  const { session_id } = endShiftBody.parse(req.body)
+  req.auditLogged = true
+  res.json({ ok: true, session: await pauseShift(req.user!.user_id, session_id, { ip_address: clientIp(req) }, 'owner') })
+})
+
+/** Body: { session_id } — unlocks a paused terminal. */
+adminRoutes.post('/resume-shift', async (req, res) => {
+  const { session_id } = endShiftBody.parse(req.body)
+  req.auditLogged = true
+  res.json({ ok: true, session: await resumeShift(req.user!.user_id, session_id, { ip_address: clientIp(req) }) })
 })
 
 /** Ends every active session. */

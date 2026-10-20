@@ -213,10 +213,10 @@ export function EmployeesPanel() {
       <button className="primary-button" onClick={() => setEditing({ id: `e${Date.now().toString(36)}`, name: '', email: '', role: 'Cashier', status: 'Active', lastActive: new Date().toISOString() })}>＋ ADD EMPLOYEE</button></div>
     <div className="table-toolbar"><Segmented label="Show" options={['All', 'Active', 'Inactive'] as const} value={status} onChange={setStatus} /></div>
     {(error || server.error) && <p className="form-error">{error ?? server.error}</p>}
-    <div className="data-table-wrap"><table className="data-table clickable"><thead><tr>{['EMPLOYEE', 'ROLE', 'STATUS', 'SALES (7 DAYS)', 'LAST ACTIVE', ''].map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
+    <div className="data-table-wrap"><table className="data-table clickable"><thead><tr>{['EMPLOYEE', 'ROLE', 'STATUS', 'SHIFT', 'SALES (7 DAYS)', 'LAST ACTIVE', ''].map((h, i) => <th key={i}>{h}</th>)}</tr></thead>
       <tbody>{rows.map((e) => <tr key={e.id} onClick={() => setEditing(e)}>
         <td><div className="person-cell"><span className="avatar">{initials(e.name)}</span><div><b>{e.name}</b><small>{e.email}</small></div></div></td>
-        <td>{e.role}</td><td><StatusPill value={e.status} />{e.onTerminal && <small className="on-terminal">on {e.onTerminal}</small>}</td><td>{peso(e.salesWeek, 0)}<small>{e.receiptsWeek} receipt{e.receiptsWeek === 1 ? '' : 's'}</small></td><td>{relativeDay(e.lastActive)}</td>
+        <td>{e.role}</td><td><StatusPill value={e.status} /></td><td><ShiftCell employee={e} /></td><td>{peso(e.salesWeek, 0)}<small>{e.receiptsWeek} receipt{e.receiptsWeek === 1 ? '' : 's'}</small></td><td>{relativeDay(e.lastActive)}</td>
         <td className="employee-actions" onClick={(event) => event.stopPropagation()}><div>
           <button className="outline-button" onClick={() => setActivityFor(e)}>ACTIVITY</button>
           {e.role !== 'Owner' && (e.status === 'Inactive'
@@ -262,6 +262,17 @@ function ActivityModal({ employee, onClose }: { employee: Employee; onClose: () 
     </>}
     {!live && <p className="muted-text">Shift and void history is available when the app is connected to the store database.</p>}
   </Modal>
+}
+
+/** Where a cashier's latest shift stands: on a terminal, paused, or ended (with the time it ended). */
+function ShiftCell({ employee }: { employee: Employee }) {
+  const shift = employee.shift
+  if (!shift) return <span className="muted-text">{employee.role === 'Owner' ? '—' : 'No shift yet'}</span>
+  const sameDay = (iso: string) => new Date(iso).toDateString() === new Date().toDateString()
+  const stamp = (iso: string | null) => !iso ? '' : sameDay(iso) ? time(iso) : `${new Date(iso).toLocaleDateString('en-PH', { month: 'short', day: 'numeric' })}, ${time(iso)}`
+  if (shift.state === 'on') return <div><b>On {shift.terminal}</b><small className="shift-sub">since {stamp(shift.startedAt)}</small></div>
+  if (shift.state === 'paused') return <div><b>Paused · {shift.terminal}</b><small className="shift-sub">locked since {stamp(shift.pausedAt)}</small></div>
+  return <div><b>Ended {stamp(shift.endedAt)}</b><small className="shift-sub">{shift.terminal} · {shift.endedBy === 'cashier' ? 'by the cashier' : 'by the owner'}</small></div>
 }
 
 function EmployeeModal({ employee, isNew, onClose, onSave }: { employee: Employee; isNew: boolean; onClose: () => void; onSave: (e: Employee) => void }) {

@@ -18,7 +18,8 @@ function useSessionPerson() {
   const terminal = useTerminal()
   const auth = useAuth()
   if (terminal.mode === 'terminal') {
-    const user = terminal.status?.assigned ? terminal.status.user : null
+    // A paused shift keeps its person, so the screen they were on stays put behind the pause popup.
+    const user = terminal.status?.assigned || terminal.status?.paused ? terminal.status.user : null
     return user ? { id: `u${user.user_id}`, name: user.name, role: 'Cashier' as const } : null
   }
   if (terminal.mode === 'server' && auth.status === 'signed_in' && auth.user) {
@@ -43,6 +44,17 @@ function Splash({ text }: { text: string }) {
   return <main className="app-splash"><span className="eyebrow">9010 GROCERY SYSTEM</span><p>{text}</p></main>
 }
 
+/** Covers the cashier's current screen, blurred, until the owner resumes the shift from the Admin Station. */
+function ShiftPausedModal({ name, terminalId }: { name?: string; terminalId: string | null }) {
+  return <div className="modal-backdrop pause-backdrop" role="alertdialog" aria-modal="true" aria-labelledby="pause-title">
+    <div className="modal pause-modal">
+      <div className="lock-mark" aria-hidden="true"><span /></div>
+      <h2 id="pause-title">Your shift has been paused</h2>
+      <p>{name ? `${name}, take` : 'Take'} a short break. Everything on your screen is kept as you left it{terminalId ? ` on ${terminalId}` : ''}. This unlocks as soon as the owner resumes your shift.</p>
+    </div>
+  </div>
+}
+
 /** Decides what this PC shows: setup, owner sign-in, terminal lock screen, or the workspace. */
 function Root() {
   const terminal = useTerminal()
@@ -57,8 +69,14 @@ function Root() {
   if (terminal.mode === 'unconfigured') return <DeviceSetup />
 
   if (terminal.mode === 'terminal') {
-    if (!terminal.status?.assigned) return <TerminalLock />
-    return ready ? <Workspace /> : <Splash text="Unlocking…" />
+    const paused = Boolean(terminal.status?.paused)
+    if (!terminal.status?.assigned && !paused) return <TerminalLock />
+    if (!ready) return <Splash text="Unlocking…" />
+    if (!paused) return <Workspace />
+    return <>
+      <div className="paused-behind" inert aria-hidden="true"><Workspace /></div>
+      <ShiftPausedModal name={terminal.status?.user?.name} terminalId={terminal.terminalId} />
+    </>
   }
 
   if (auth.status === 'checking') return <Splash text="Checking sign-in…" />

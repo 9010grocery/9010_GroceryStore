@@ -9,7 +9,8 @@ import { useTerminal } from '../context/TerminalContext'
 import { allowedWorkspaces, useAnalytics, useCurrentUser, useStore } from '../store/StoreContext'
 import { editorGroups, editors, editorWorkspaces, type Editor } from '../workspace/editors'
 import { Toasts } from '../workspace/ui'
-import { useHorizontalScroll } from '../hooks/useHorizontalScroll'
+import { MainMenu } from './MainMenu'
+import { useOwnShift } from '../hooks/useOwnShift'
 
 type Direction = 'horizontal' | 'vertical'
 type LayoutNode =
@@ -23,7 +24,7 @@ const makeSplit = (direction: Direction, first: LayoutNode, second: LayoutNode, 
 
 function defaultLayout(workspace: WorkspaceName): LayoutNode {
   switch (workspace) {
-    case 'Admin Station': return makeSplit('horizontal', makePanel('Admin Station'), makePanel('Employees'), 0.6)
+    case 'Admin Station': return makeSplit('horizontal', makePanel('Admin Station'), makePanel('Employees'), 0.5)
     case 'Point of Sale': return makeSplit('horizontal', makePanel('Product Grid'), makePanel('Cart'), 0.64)
     case 'Transactions': return makeSplit('horizontal', makePanel('Transactions'), makeSplit('vertical', makePanel('Returns & Refunds'), makePanel('Shift & Cash Drawer'), 0.6), 0.6)
     case 'Inventory': return makeSplit('horizontal', makeSplit('vertical', makePanel('Inventory Metrics'), makePanel('Purchasing'), 0.3), makePanel('Inventory Table'), 0.45)
@@ -43,8 +44,43 @@ function updateNode(node: LayoutNode, id: string, update: (node: LayoutNode) => 
   return { ...node, first: updateNode(node.first, id, update), second: updateNode(node.second, id, update) }
 }
 
-function updateRatio(node: LayoutNode, id: string, ratio: number): LayoutNode {
-  return updateNode(node, id, (item) => item.type === 'split' ? { ...item, ratio } : item)
+type SplitNode = Extract<LayoutNode, { type: 'split' }>
+
+// On a phone-width screen a horizontal split is stacked, so it behaves like a vertical one.
+const effectiveDirection = (direction: Direction): Direction => (window.matchMedia('(max-width: 540px)').matches && direction === 'horizontal' ? 'vertical' : direction)
+
+/**
+ * Re-fits the panels on one side of a dragged gutter. Only the panels that touch the gutter change size; panels
+ * further away keep the size they had, so dragging one edge never resizes the whole neighbouring group.
+ */
+function resizeAlong(node: LayoutNode, axis: Direction, oldSize: number, newSize: number, edge: 'start' | 'end'): LayoutNode {
+  if (node.type === 'panel') return node
+  if (effectiveDirection(node.direction) !== axis) {
+    // Children sit side by side across the axis, so each one touches the gutter and stretches with it.
+    return { ...node, first: resizeAlong(node.first, axis, oldSize, newSize, edge), second: resizeAlong(node.second, axis, oldSize, newSize, edge) }
+  }
+  const minimum = 48
+  if (newSize < minimum * 2) return node
+  const firstOld = node.ratio * oldSize
+  const secondOld = oldSize - firstOld
+  if (edge === 'end') {
+    const firstNew = Math.min(firstOld, newSize - minimum)
+    return { ...node, ratio: firstNew / newSize, second: resizeAlong(node.second, axis, secondOld, newSize - firstNew, 'end') }
+  }
+  const secondNew = Math.min(secondOld, newSize - minimum)
+  return { ...node, ratio: (newSize - secondNew) / newSize, first: resizeAlong(node.first, axis, firstOld, newSize - secondNew, 'start') }
+}
+
+/** Moves one gutter to `ratio` of its container (`size` px along the split's axis), resizing only the panels beside it. */
+function moveGutter(split: SplitNode, ratio: number, size: number): LayoutNode {
+  const axis = effectiveDirection(split.direction)
+  const firstOld = split.ratio * size
+  return {
+    ...split,
+    ratio,
+    first: resizeAlong(split.first, axis, firstOld, ratio * size, 'end'),
+    second: resizeAlong(split.second, axis, size - firstOld, size - ratio * size, 'start'),
+  }
 }
 
 function replacePanel(node: LayoutNode, id: string, editor: Editor): LayoutNode {
@@ -204,6 +240,8 @@ function Workspace() {
   const allowed = user ? (setupPending ? ['Settings' as WorkspaceName] : allowedWorkspaces(state.settings, user.role)) : []
   // The owner starts on the Admin Station; a cashier starts on the first workspace they may open (Point of Sale).
   const [activeWorkspace, setActiveWorkspace] = useState<WorkspaceName>(() => allowed[0] ?? 'Point of Sale')
+  // Everyone lands on the main menu (a grid of workspaces), except the first-run account setup, which goes straight to Settings.
+  const [home, setHome] = useState(!setupPending)
   const terminal = useTerminal()
   // Each workspace keeps its own arrangement while you switch tabs.
   const [layouts, setLayouts] = useState<Partial<Record<WorkspaceName, LayoutNode>>>({})
@@ -218,12 +256,6 @@ function Workspace() {
   const [dragging, setDragging] = useState(false)
   const [splitDrag, setSplitDrag] = useState<SplitDrag | null>(null)
   const allowedRef = useRef(allowed)
-  const tabStrip = useHorizontalScroll<HTMLDivElement>()
-
-  // Keep the selected tab visible when it changes (including from shortcuts elsewhere in the app).
-  useEffect(() => {
-    tabStrip.element.current?.querySelector<HTMLElement>('.workspace-tab.active')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' })
-  }, [activeWorkspace, tabStrip.element])
 
   useEffect(() => { allowedRef.current = allowed })
 
@@ -235,6 +267,7 @@ function Workspace() {
 
   function selectWorkspace(workspace: WorkspaceName) {
     setActiveWorkspace(workspace)
+    setHome(false)
     setSplitDrag(null)
   }
 
@@ -364,27 +397,20 @@ function Workspace() {
           <div className="brand-mark" aria-hidden="true"><span>{iconRegistry.brandMark}</span></div>
           <div><strong>9010</strong><span>GROCERY SYSTEM</span></div>
         </div>
-        <span className="tab-caption">WORKSPACES</span>
-        <div className={`workspace-tab-strip${tabStrip.overflow.left ? ' more-left' : ''}${tabStrip.overflow.right ? ' more-right' : ''}`}>
-          {tabStrip.overflow.left && <button className="tab-scroll left" aria-label="Scroll workspaces left" onClick={() => tabStrip.scrollBy(-1)}>‹</button>}
-          <div className="workspace-tab-list" ref={tabStrip.attach}>
-            {allowed.map((workspace) => (
-              <button key={workspace} className={activeWorkspace === workspace ? 'workspace-tab active' : 'workspace-tab'} onClick={() => selectWorkspace(workspace)}>
-                {workspace}
-              </button>
-            ))}
-          </div>
-          {tabStrip.overflow.right && <button className="tab-scroll right" aria-label="Scroll workspaces right" onClick={() => tabStrip.scrollBy(1)}>›</button>}
-        </div>
+        {home
+          ? <span className="nav-crumb">HOME</span>
+          : <button className="menu-home-button" onClick={() => { setHome(true); setSplitDrag(null) }} title="Back to the main menu">⌂ MAIN MENU</button>}
+        <div className="workspace-tab-strip" />
         <AccountMenu />
       </nav>
 
-      <div className="workspace-titlebar">
+      {home && <MainMenu workspaces={allowed} onOpen={selectWorkspace} />}
+      {!home && <div className="workspace-titlebar">
         <div><span className="crumb">WORKSPACE</span><b>{activeWorkspace.toUpperCase()}</b><span className="crumb-separator">/</span><span className="title-detail">{workspaceDescription(activeWorkspace)}</span>{user.role === 'Cashier' && <span className="cashier-chip">Cashier: <b>{user.name}</b>{terminal.terminalId && <> · {terminal.terminalId}</>}{!terminal.online && <em> · reconnecting…</em>}</span>}</div>
         <div className="title-actions"><span className="sync-status"><i /> SAVED LOCALLY</span><button className="quiet-button" onClick={() => setLayout(defaultLayout(activeWorkspace))}>Reset layout</button></div>
-      </div>
+      </div>}
 
-      <section className={`area-canvas${dragging ? ' is-resizing' : ''}${splitDrag ? ' is-splitting' : ''}`}>
+      {!home && <section className={`area-canvas${dragging ? ' is-resizing' : ''}${splitDrag ? ' is-splitting' : ''}`}>
         <LayoutView
           node={layout}
           onLayoutChange={setLayout}
@@ -392,13 +418,12 @@ function Workspace() {
           onSplitDrag={beginSplitDrag}
           onResizeStart={() => setDragging(true)}
           onResizeEnd={() => setDragging(false)}
-          onGutterSplit={(targetId, direction, after) => setLayout((current) => splitPanel(current, targetId, direction, after))}
           splitDrag={splitDrag}
         />
         {splitDrag?.ghost && <div className="split-ghost" style={splitDrag.ghost} />}
         {splitDrag?.targetRect && splitDrag.targetId !== splitDrag.panelId && <div className={splitDrag.ctrlKey ? 'area-drop-overlay swap-preview' : splitDrag.joinBlocked ? 'area-drop-overlay join-blocked' : 'area-drop-overlay'} style={splitDrag.targetRect} aria-hidden="true" />}
         {splitDrag?.sourceCenter && splitDrag.joinDirection && <div className={splitDrag.ctrlKey ? 'join-direction-indicator swap-preview' : splitDrag.joinBlocked ? 'join-direction-indicator join-blocked' : 'join-direction-indicator'} style={splitDrag.sourceCenter} aria-hidden="true"><span>{splitDrag.ctrlKey ? '↔' : splitDrag.joinBlocked ? '⊘' : ({ left: '←', right: '→', up: '↑', down: '↓' })[splitDrag.joinDirection]}</span></div>}
-      </section>
+      </section>}
 
       <StatusBar />
       <Toasts />
@@ -413,6 +438,8 @@ function AccountMenu() {
   const navigate = useNavigate()
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
+  const shift = useOwnShift()
+  const cancelShiftPrompt = shift.cancel
 
   useEffect(() => {
     if (!open) return
@@ -422,6 +449,9 @@ function AccountMenu() {
     document.addEventListener('pointerdown', closeOutside)
     return () => document.removeEventListener('pointerdown', closeOutside)
   }, [open])
+
+  // Closing the menu drops any half-answered shift prompt.
+  useEffect(() => { if (!open) cancelShiftPrompt() }, [open]) // eslint-disable-line react-hooks/exhaustive-deps
 
   if (!user) return null
   const canSettings = allowedWorkspaces(state.settings, user.role).includes('Settings')
@@ -436,7 +466,23 @@ function AccountMenu() {
       {canSettings && <button role="menuitem" onClick={() => { actions.navigate('Settings'); setOpen(false) }}><span>⚙</span> Store settings</button>}
       {user.role === 'Owner'
         ? <button role="menuitem" onClick={() => { setOpen(false); void auth.logout().then(() => navigate('/')) }}><span>⎋</span> Sign out</button>
-        : <p className="account-menu-note">Your shift is ended by the owner from the Admin Station.</p>}
+        : shift.available
+          ? shift.pending
+            ? <div className="account-confirm" role="group" aria-label="Confirm">
+              <b>{shift.pending === 'pause' ? 'Pause your shift?' : 'End your shift?'}</b>
+              <p>{shift.pending === 'pause'
+                ? 'A "shift paused" popup covers your screen. Your work stays as it is, and only the owner can resume it from the Admin Station.'
+                : 'The terminal locks and your end time is recorded. The owner has to assign you again to start another shift.'}</p>
+              <div>
+                <button onClick={shift.cancel}>CANCEL</button>
+                <button className={shift.pending === 'end' ? 'danger' : 'primary'} disabled={shift.busy} onClick={() => { setOpen(false); void shift.confirm() }}>{shift.pending === 'pause' ? 'PAUSE SHIFT' : 'END SHIFT'}</button>
+              </div>
+            </div>
+            : <>
+              <button role="menuitem" disabled={shift.busy} onClick={() => shift.ask('pause')}><span>⏸</span> Pause shift</button>
+              <button role="menuitem" disabled={shift.busy} onClick={() => shift.ask('end')}><span>⎋</span> End shift</button>
+            </>
+          : <p className="account-menu-note">Your shift is ended by the owner from the Admin Station.</p>}
     </div>}
   </div>
 }
@@ -456,11 +502,10 @@ interface LayoutViewProps {
   onSplitDrag: (event: PointerEvent<HTMLButtonElement>, id: string) => void
   onResizeStart: () => void
   onResizeEnd: () => void
-  onGutterSplit: (targetId: string, direction: Direction, after: boolean) => void
   splitDrag: SplitDrag | null
 }
 
-function LayoutView({ node, onLayoutChange, onEditorChange, onSplitDrag, onResizeStart, onResizeEnd, onGutterSplit, splitDrag }: LayoutViewProps) {
+function LayoutView({ node, onLayoutChange, onEditorChange, onSplitDrag, onResizeStart, onResizeEnd, splitDrag }: LayoutViewProps) {
   if (node.type === 'panel') {
     const highlighted = splitDrag?.panelId === node.id && splitDrag.targetId === node.id && Math.hypot(splitDrag.x - splitDrag.startX, splitDrag.y - splitDrag.startY) > 12
     return (
@@ -479,75 +524,46 @@ function LayoutView({ node, onLayoutChange, onEditorChange, onSplitDrag, onResiz
     event.stopPropagation()
     if (node.type !== 'split') return
     const splitNode = node
-    const resizeDirection: Direction = window.matchMedia('(max-width: 540px)').matches && splitNode.direction === 'horizontal' ? 'vertical' : splitNode.direction
+    const resizeDirection = effectiveDirection(splitNode.direction)
     const container = event.currentTarget.parentElement
     if (!container) return
     const bounds = container.getBoundingClientRect()
     const dimension = resizeDirection === 'horizontal' ? bounds.width : bounds.height
     const pointerId = event.pointerId
-    const startX = event.clientX
-    const startY = event.clientY
-    let splittingGesture = false
     event.currentTarget.setPointerCapture(pointerId)
     onResizeStart()
 
+    const ratioAt = (e: globalThis.PointerEvent) => (resizeDirection === 'horizontal' ? e.clientX - bounds.left : e.clientY - bounds.top) / dimension
+    // Every move starts from the split as it was when the drag began, so panels away from the gutter never drift.
+    const apply = (ratio: number) => onLayoutChange((current) => updateNode(current, splitNode.id, () => moveGutter(splitNode, ratio, dimension)))
+
     const move = (moveEvent: globalThis.PointerEvent) => {
       if (moveEvent.pointerId !== pointerId) return
-      const position = resizeDirection === 'horizontal' ? moveEvent.clientX - bounds.left : moveEvent.clientY - bounds.top
-      const alongAxisDistance = resizeDirection === 'horizontal' ? Math.abs(moveEvent.clientX - startX) : Math.abs(moveEvent.clientY - startY)
-      const crossAxisDistance = resizeDirection === 'horizontal' ? Math.abs(moveEvent.clientY - startY) : Math.abs(moveEvent.clientX - startX)
-      if (crossAxisDistance > 24 && crossAxisDistance > alongAxisDistance * 0.5) {
-        if (!splittingGesture) onLayoutChange((current) => updateRatio(current, splitNode.id, splitNode.ratio))
-        splittingGesture = true
-        return
-      }
-      if (splittingGesture) return
-      const rawRatio = position / dimension
-      const ratio = Math.max(0.04, Math.min(0.96, rawRatio))
-      onLayoutChange((current) => updateRatio(current, splitNode.id, ratio))
+      apply(Math.max(0.04, Math.min(0.96, ratioAt(moveEvent))))
     }
     const end = (endEvent: globalThis.PointerEvent) => {
       if (endEvent.pointerId !== pointerId) return
-      const position = resizeDirection === 'horizontal' ? endEvent.clientX - bounds.left : endEvent.clientY - bounds.top
-      const rawRatio = position / dimension
-      const crossAxisDistance = resizeDirection === 'horizontal'
-        ? Math.abs(endEvent.clientY - startY)
-        : Math.abs(endEvent.clientX - startX)
-      const alongAxisDistance = resizeDirection === 'horizontal'
-        ? Math.abs(endEvent.clientX - startX)
-        : Math.abs(endEvent.clientY - startY)
-      const target = document.elementFromPoint(endEvent.clientX, endEvent.clientY)?.closest<HTMLElement>('[data-area-id]')
-      if (crossAxisDistance > 24 && crossAxisDistance > alongAxisDistance * 0.5 && target?.dataset.areaId) {
-        const targetBounds = target.getBoundingClientRect()
-        const x = (endEvent.clientX - targetBounds.left) / targetBounds.width
-        const y = (endEvent.clientY - targetBounds.top) / targetBounds.height
-        const distances = [x, 1 - x, y, 1 - y]
-        const nearest = distances.indexOf(Math.min(...distances))
-        const direction: Direction = nearest < 2 ? 'horizontal' : 'vertical'
-        onGutterSplit(target.dataset.areaId, direction, nearest === 1 || nearest === 3)
-      } else if (rawRatio < 0.08) {
-        onLayoutChange((current) => collapseSplit(current, splitNode.id, 'second'))
-      } else if (rawRatio > 0.92) {
-        onLayoutChange((current) => collapseSplit(current, splitNode.id, 'first'))
-      } else {
-        const ratio = Math.max(0.12, Math.min(0.88, rawRatio))
-        onLayoutChange((current) => updateRatio(current, splitNode.id, ratio))
-      }
+      const rawRatio = ratioAt(endEvent)
+      if (rawRatio < 0.08) onLayoutChange((current) => collapseSplit(current, splitNode.id, 'second'))
+      else if (rawRatio > 0.92) onLayoutChange((current) => collapseSplit(current, splitNode.id, 'first'))
+      else apply(Math.max(0.12, Math.min(0.88, rawRatio)))
       onResizeEnd()
       window.removeEventListener('pointermove', move)
       window.removeEventListener('pointerup', end)
+      window.removeEventListener('pointercancel', end)
     }
     window.addEventListener('pointermove', move)
     window.addEventListener('pointerup', end)
+    window.addEventListener('pointercancel', end)
   }
 
   return (
     <div className={`area-split ${node.direction}`} style={splitStyle}>
-      <LayoutView node={node.first} onLayoutChange={onLayoutChange} onEditorChange={onEditorChange} onSplitDrag={onSplitDrag} onResizeStart={onResizeStart} onResizeEnd={onResizeEnd} onGutterSplit={onGutterSplit} splitDrag={splitDrag} />
+      <LayoutView node={node.first} onLayoutChange={onLayoutChange} onEditorChange={onEditorChange} onSplitDrag={onSplitDrag} onResizeStart={onResizeStart} onResizeEnd={onResizeEnd} splitDrag={splitDrag} />
       <div className={`area-gutter ${node.direction}`} role="separator" aria-orientation={node.direction === 'horizontal' ? 'vertical' : 'horizontal'} onPointerDown={onGutterPointerDown}>
         <span className="gutter-grip" />
       </div>
-      <LayoutView node={node.second} onLayoutChange={onLayoutChange} onEditorChange={onEditorChange} onSplitDrag={onSplitDrag} onResizeStart={onResizeStart} onResizeEnd={onResizeEnd} onGutterSplit={onGutterSplit} splitDrag={splitDrag} />
+      <LayoutView node={node.second} onLayoutChange={onLayoutChange} onEditorChange={onEditorChange} onSplitDrag={onSplitDrag} onResizeStart={onResizeStart} onResizeEnd={onResizeEnd} splitDrag={splitDrag} />
     </div>
   )
 }
