@@ -1,5 +1,7 @@
 import { Router, type Request } from 'express'
-import { getTerminalStatus, heartbeat, listTerminalChoices } from '../services/session.service.js'
+import { verifyTerminalToken } from '../services/auth.service.js'
+import { endOwnShift, getTerminalStatus, heartbeat, listTerminalChoices, pauseShift } from '../services/session.service.js'
+import { HttpError } from '../utils/httpError.js'
 import { terminalParams } from '../utils/validators.js'
 import { clientIp } from '../utils/ip.js'
 
@@ -28,4 +30,29 @@ terminalRoutes.post('/:terminal_id/heartbeat', async (req, res) => {
   const { terminal_id } = terminalParams.parse(req.params)
   req.auditLogged = true // heartbeats are routine; not worth an audit row every 30 s
   res.json(await heartbeat(terminal_id, { ip_address: clientIp(req) }))
+})
+
+/** The cashier on this terminal (proved by X-Session-Token) acts on their own shift. */
+function ownShift(req: Request, terminalId: string) {
+  const token = req.header('x-session-token')
+  if (!token) throw HttpError.unauthorized()
+  const claims = verifyTerminalToken(token)
+  if (claims.terminal_id !== terminalId) throw HttpError.forbidden('That shift belongs to another terminal')
+  return claims
+}
+
+/** Locks this terminal until the owner resumes it; the shift stays open. */
+terminalRoutes.post('/:terminal_id/pause', async (req, res) => {
+  const { terminal_id } = terminalParams.parse(req.params)
+  const claims = ownShift(req, terminal_id)
+  req.auditLogged = true
+  res.json({ ok: true, session: await pauseShift(claims.user_id, claims.session_id, { ip_address: clientIp(req) }, 'cashier', terminal_id) })
+})
+
+/** The cashier ends their own shift; the end time shows in the Employees table. */
+terminalRoutes.post('/:terminal_id/end-shift', async (req, res) => {
+  const { terminal_id } = terminalParams.parse(req.params)
+  const claims = ownShift(req, terminal_id)
+  req.auditLogged = true
+  res.json({ ok: true, session: await endOwnShift(claims.session_id, terminal_id, { ip_address: clientIp(req) }) })
 })

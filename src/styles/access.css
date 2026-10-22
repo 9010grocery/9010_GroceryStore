@@ -87,3 +87,8 @@
 .who-terminal em { color: #b9a07e; font-size: 9px; font-style: normal; }
 .lock-switch { margin-top: 4px; }
 @media (max-width: 420px) { .who-choices { grid-template-columns: 1fr; } }
+
+.terminal-shift-actions { display: flex; gap: 6px; }
+.terminal-shift-actions > button { flex: 1; }
+.terminal-card.assigned .terminal-meta { color: #a3b18f; }
+.shift-sub { display: block; margin-top: 2px; color: var(--muted); font-size: 8px; }

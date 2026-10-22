@@ -1,11 +1,11 @@
 /**
  * On-device analytics for the prototype. Everything here is plain statistics
- * (weighted moving average, exponential smoothing, regression, association
- * rules) computed in the browser from the mock dataset, so it can be swapped
+ * (recent averages, regression, association rules) computed in the browser
+ * from the store's sales, so it can be swapped
  * for a backend model service later without changing the screens.
  */
 import { DETAIL_DAYS, HISTORY_DAYS } from '../data/defaults'
-import type { CustomerRequest, ForecastMethod, Product, PurchaseOrder, Settings, Transaction, WasteEntry, WorkspaceName } from '../data/types'
+import type { CustomerRequest, Product, PurchaseOrder, Settings, Transaction, WasteEntry, WorkspaceName } from '../data/types'
 import { DAY_MS, daysBetween, peso, pct, startOfDay } from './format'
 
 export const WEEKS = 12
@@ -44,76 +44,14 @@ export function weekLabels(now = new Date()) {
   })
 }
 
-// ---------- Forecasting ----------
+// ---------- Demand ----------
 
-export interface ForecastResult {
-  method: ForecastMethod
-  fitted: (number | null)[]
-  forecast: number[]
-  lower: number[]
-  upper: number[]
-  mae: number
-  mape: number
-  rmse: number
-  accuracy: number
-  confidence: 'High' | 'Medium' | 'Low'
-}
-
-function errorStats(actual: number[], fitted: (number | null)[]) {
-  const pairs = actual.map((value, i) => [value, fitted[i]] as const).filter((pair): pair is readonly [number, number] => pair[1] !== null)
-  if (pairs.length === 0) return { mae: 0, mape: 0, rmse: 0 }
-  const mae = pairs.reduce((sum, [a, f]) => sum + Math.abs(a - f), 0) / pairs.length
-  const rmse = Math.sqrt(pairs.reduce((sum, [a, f]) => sum + (a - f) ** 2, 0) / pairs.length)
-  const scored = pairs.filter(([a]) => a > 0)
-  const mape = scored.length ? scored.reduce((sum, [a, f]) => sum + Math.abs(a - f) / a, 0) / scored.length : 0
-  return { mae, mape, rmse }
-}
-
-export function forecastSeries(series: number[], method: ForecastMethod, settings: Pick<Settings, 'wmaWeights' | 'sesAlpha'>, horizon = 4): ForecastResult {
-  const fitted: (number | null)[] = []
-  let forecast: number[] = []
-
-  if (method === 'WMA') {
-    const weights = settings.wmaWeights
-    const total = weights.reduce((a, b) => a + b, 0) || 1
-    const wma = (end: number) => weights.reduce((sum, w, j) => sum + w * (series[end - 1 - j] ?? 0), 0) / total
-    for (let t = 0; t < series.length; t++) fitted.push(t >= weights.length ? wma(t) : null)
-    const next = wma(series.length)
-    forecast = new Array(horizon).fill(next)
-  } else if (method === 'SES') {
-    const alpha = settings.sesAlpha
-    let level = series[0] ?? 0
-    for (let t = 0; t < series.length; t++) {
-      fitted.push(t === 0 ? null : level)
-      level = alpha * series[t] + (1 - alpha) * level
-    }
-    forecast = new Array(horizon).fill(level)
-  } else {
-    const alpha = settings.sesAlpha
-    const beta = 0.2
-    let level = series[0] ?? 0
-    let trend = (series[1] ?? level) - level
-    for (let t = 0; t < series.length; t++) {
-      fitted.push(t < 2 ? null : level + trend)
-      const previous = level
-      level = alpha * series[t] + (1 - alpha) * (level + trend)
-      trend = beta * (level - previous) + (1 - beta) * trend
-    }
-    forecast = Array.from({ length: horizon }, (_, h) => Math.max(0, level + (h + 1) * trend))
-  }
-
-  const { mae, mape, rmse } = errorStats(series, fitted)
-  const lower = forecast.map((value, h) => Math.max(0, value - 1.28 * rmse * Math.sqrt(h + 1)))
-  const upper = forecast.map((value, h) => value + 1.28 * rmse * Math.sqrt(h + 1))
-  const accuracy = Math.max(0, 1 - mape)
-  return { method, fitted, forecast, lower, upper, mae, mape, rmse, accuracy, confidence: mape < 0.15 ? 'High' : mape < 0.3 ? 'Medium' : 'Low' }
-}
-
-/** Picks the method with the lowest error on the product's own history. */
-export function bestMethod(series: number[], settings: Pick<Settings, 'wmaWeights' | 'sesAlpha'>) {
-  return (['WMA', 'SES', 'Holt'] as ForecastMethod[])
-    .map((method) => forecastSeries(series, method, settings))
-    .sort((a, b) => a.mape - b.mape)[0]
+/** Plain average of the last `window` complete weeks (units / week), and how much those weeks vary (standard deviation). Not a forecasting model. */
+export function recentDemand(weekly: number[], window = 4) {
+  const recent = weekly.slice(-window)
+  const average = recent.length ? recent.reduce((a, b) => a + b, 0) / recent.length : 0
+  const spread = recent.length > 1 ? Math.sqrt(recent.reduce((sum, v) => sum + (v - average) ** 2, 0) / (recent.length - 1)) : 0
+  return { average, spread }
 }
 
 // ---------- Trend ----------
@@ -146,7 +84,7 @@ export interface ProductAnalysis {
   product: Product
   daily: number[]
   weekly: number[]
-  forecast: ForecastResult
+  weeklySpread: number
   weeklyDemand: number
   dailyDemand: number
   change: number
@@ -168,12 +106,11 @@ export interface ProductAnalysis {
 export function analyseProduct(product: Product, history: Record<string, number[]>, transactions: Transaction[], purchaseOrders: PurchaseOrder[], settings: Settings, now = new Date()): ProductAnalysis {
   const daily = dailyUnits(product.id, history, transactions, now)
   const weekly = weeklyFromDaily(daily)
-  const forecast = forecastSeries(weekly, settings.forecastMethod, settings)
-  const weeklyDemand = forecast.forecast[0]
+  const { average: weeklyDemand, spread: weeklySpread } = recentDemand(weekly)
   const dailyDemand = weeklyDemand / 7
   const change = periodChange(weekly)
   const onOrder = purchaseOrders.filter((po) => po.status === 'Pending' || po.status === 'Partially received').flatMap((po) => po.lines).filter((line) => line.productId === product.id).reduce((sum, line) => sum + Math.max(0, line.qty - line.received), 0)
-  const sdDaily = forecast.rmse / Math.sqrt(7)
+  const sdDaily = weeklySpread / Math.sqrt(7)
   const safetyStock = zForService(settings.serviceLevel) * sdDaily * Math.sqrt(product.leadTimeDays)
   const reorderLevel = Math.max(product.reorderPoint, dailyDemand * product.leadTimeDays + safetyStock)
   const target = reorderLevel + dailyDemand * settings.coverDays
@@ -188,7 +125,7 @@ export function analyseProduct(product: Product, history: Record<string, number[
   const markdown = riskShare > 0.5 ? 0.3 : riskShare > 0.2 ? 0.15 : riskShare > 0 ? 0.1 : 0
   const units28 = daily.slice(-29, -1).reduce((a, b) => a + b, 0)
   return {
-    product, daily, weekly, forecast, weeklyDemand, dailyDemand, change, direction: trendDirection(change), daysOfCover, stockoutDate, onOrder,
+    product, daily, weekly, weeklySpread, weeklyDemand, dailyDemand, change, direction: trendDirection(change), daysOfCover, stockoutDate, onOrder,
     safetyStock, reorderLevel, suggestedQty, urgency, expiryDays, atRiskUnits, markdown, units28, revenue28: units28 * product.price,
   }
 }
@@ -320,7 +257,7 @@ export function buildInsights(analyses: ProductAnalysis[], transactions: Transac
     })
   }
   const reorder = analyses.filter((a) => a.urgency === 'Reorder')
-  if (reorder.length) insights.push({ id: 'reorder', severity: 'warning', title: `${reorder.length} more item${reorder.length > 1 ? 's' : ''} below the AI reorder level`, detail: reorder.slice(0, 4).map((a) => a.product.name).join(', ') + (reorder.length > 4 ? '…' : ''), metric: `${reorder.length} items`, action: { label: 'Open purchasing', workspace: 'Purchasing' } })
+  if (reorder.length) insights.push({ id: 'reorder', severity: 'warning', title: `${reorder.length} more item${reorder.length > 1 ? 's' : ''} below their reorder level`, detail: reorder.slice(0, 4).map((a) => a.product.name).join(', ') + (reorder.length > 4 ? '…' : ''), metric: `${reorder.length} items`, action: { label: 'Open purchasing', workspace: 'Purchasing' } })
 
   const expiring = analyses.filter((a) => a.atRiskUnits > 0).sort((a, b) => b.atRiskUnits * b.product.cost - a.atRiskUnits * a.product.cost)
   for (const item of expiring.slice(0, 2)) {
@@ -380,7 +317,7 @@ export function askAssistant(question: string, analyses: ProductAnalysis[], tran
 
   if (/reorder|restock|order|run out|stock ?out/.test(q)) {
     const list = analyses.filter((a) => a.suggestedQty > 0).sort((a, b) => a.daysOfCover - b.daysOfCover)
-    if (!list.length) return { text: 'Nothing needs reordering right now — every product is above its AI reorder level.' }
+    if (!list.length) return { text: 'Nothing needs reordering right now — every product is above its reorder level.' }
     return { text: `${list.length} products should be reordered. Most urgent first:`, bullets: list.slice(0, 6).map((a) => `${a.product.name}: order ${a.suggestedQty} (${Number.isFinite(a.daysOfCover) ? a.daysOfCover.toFixed(1) : '∞'} days of cover)`), action: { label: 'Open purchasing', workspace: 'Purchasing' } }
   }
   if (/expir|spoil|waste|markdown/.test(q)) {
@@ -417,9 +354,9 @@ export function askAssistant(question: string, analyses: ProductAnalysis[], tran
   if (product || /forecast|predict|next week/.test(q)) {
     const target = product ?? [...analyses].sort((a, b) => b.revenue28 - a.revenue28)[0]
     return {
-      text: `${target.product.name}: next week's forecast is ${target.weeklyDemand.toFixed(1)} ${target.product.unit}s (${target.forecast.method}, ${Math.round(target.forecast.accuracy * 100)}% backtest accuracy).`,
+      text: `${target.product.name}: averaged ${target.weeklyDemand.toFixed(1)} ${target.product.unit}s a week over the last 4 weeks.`,
       bullets: [`On hand: ${target.product.stock} · ${Number.isFinite(target.daysOfCover) ? target.daysOfCover.toFixed(1) : '∞'} days of cover`, `Trend: ${pct(target.change, 0)} (${target.direction.toLowerCase()})`, target.suggestedQty ? `Recommended order: ${target.suggestedQty}` : 'No reorder needed yet'],
-      action: { label: 'Open forecast', workspace: 'AI Insights', productId: target.product.id },
+      action: { label: 'Open sales history', workspace: 'AI Insights', productId: target.product.id },
     }
   }
   if (/sales|revenue|today/.test(q)) {

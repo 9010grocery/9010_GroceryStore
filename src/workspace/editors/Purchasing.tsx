@@ -77,8 +77,8 @@ function Suggestions({ onCreated }: { onCreated: (listId: string) => void }) {
           <td><span className={`model-chip ${r.model === 'Reorder level' ? 'fallback' : ''}`}>{r.model}</span><small>{r.historyDays} d of sales</small></td>
         </tr>
       })}</tbody></table></div>}
-    {recs.data && <div className="wma-evidence"><span className="evidence-icon">⌁</span><div><b>{models.length ? `Forecast by ${models.join(', ')}` : 'Forecast by weighted moving average'}{fallback ? ` · ${fallback} on the reorder-level rule` : ''}</b>
-      <small>{recs.data.ml.available ? (recs.data.ml.error ? `AI model service problem: ${recs.data.ml.error}. Using the moving average instead.` : `${recs.data.ml.used} product${recs.data.ml.used === 1 ? '' : 's'} forecast by the AI model service.`) : 'The AI model service is not installed on this PC yet, so a weighted moving average is used.'} Products with fewer than {recs.data.minSamples} days of sales use their reorder level.</small></div></div>}
+    {recs.data && <div className="wma-evidence"><span className="evidence-icon">⌁</span><div><b>{models.length ? `Forecast by ${models.join(', ')}` : 'Suggestions use each product\'s reorder level'}{models.length && fallback ? ` · ${fallback} on the reorder-level rule` : ''}</b>
+      <small>{recs.data.ml.available ? (recs.data.ml.error ? `The forecasting service had a problem: ${recs.data.ml.error}. Reorder levels are used instead.` : `${recs.data.ml.used} product${recs.data.ml.used === 1 ? '' : 's'} forecast by the forecasting service.`) : 'No forecasting model is installed yet, so a product is suggested when its stock is at or below its reorder level.'} Products with fewer than {recs.data.minSamples} days of sales always use their reorder level.</small></div></div>}
   </>
 }
 

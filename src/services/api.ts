@@ -177,6 +177,8 @@ export interface SessionSummary {
   assigned_at: string
   login_time: string | null
   assigned_by: number
+  is_paused: boolean
+  paused_at: string | null
 }
 
 export interface TerminalSummary {
@@ -207,6 +209,8 @@ export const getAdminTerminals = () => api.get<TerminalSummary[]>('/api/admin/te
 export const getAdminEmployees = () => api.get<EmployeeSummary[]>('/api/admin/employees').then((r) => r.data)
 export const assignTerminal = (user_id: number, terminal_id: string) => api.post<SessionSummary>('/api/admin/assign', { user_id, terminal_id }).then((r) => r.data)
 export const endShift = (session_id: number) => api.post<{ ok: true; session: SessionSummary }>('/api/admin/end-shift', { session_id }).then((r) => r.data)
+export const pauseShift = (session_id: number) => api.post<{ ok: true; session: SessionSummary }>('/api/admin/pause-shift', { session_id }).then((r) => r.data)
+export const resumeShift = (session_id: number) => api.post<{ ok: true; session: SessionSummary }>('/api/admin/resume-shift', { session_id }).then((r) => r.data)
 export const lockAllTerminals = () => api.post<{ ok: true; ended_count: number }>('/api/admin/lock-all').then((r) => r.data)
 export const createTerminal = (terminal_id: string, terminal_name: string) =>
   api.post<TerminalSummary>('/api/admin/terminals', { terminal_id, terminal_name }).then((r) => r.data)
@@ -227,11 +231,15 @@ export interface TerminalStatus {
   user: { user_id: number; name: string } | null
   assigned_at: string | null
   login_time: string | null
+  paused: boolean
   session_token: string | null
   server_time: string
 }
 
 export const getTerminalStatus = (id: string) => api.get<TerminalStatus>(`/api/terminal/${id}/status`, { timeout: 5_000 }).then((r) => r.data)
+/** The cashier on this terminal locks it (owner resumes) or ends their own shift. */
+export const pauseOwnShift = (id: string) => api.post(`/api/terminal/${id}/pause`).then(() => undefined)
+export const endOwnShift = (id: string) => api.post(`/api/terminal/${id}/end-shift`).then(() => undefined)
 export const sendHeartbeat = (id: string) => api.post(`/api/terminal/${id}/heartbeat`, undefined, { timeout: 5_000 }).then(() => undefined)
 
 // ---------------------------------------------------------------------------

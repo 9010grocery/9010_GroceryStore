@@ -17,6 +17,7 @@ function TerminalLock() {
   }, [])
 
   const checking = !status && !error
+  const paused = Boolean(status?.paused)
 
   return <main className="login-screen terminal-lock">
     <section className="login-brand">
@@ -29,8 +30,10 @@ function TerminalLock() {
     </section>
     <section className="login-panel lock-panel" aria-live="polite">
       <div className={online ? 'lock-mark' : 'lock-mark offline'} aria-hidden="true"><span /></div>
-      <h2 className="lock-title">{checking ? 'Connecting to the store server…' : 'Waiting for owner assignment...'}</h2>
-      <p className="pin-caption">This screen unlocks by itself when the owner assigns a cashier to {terminalId}.</p>
+      <h2 className="lock-title">{checking ? 'Connecting to the store server…' : paused ? 'Shift paused' : 'Waiting for owner assignment...'}</h2>
+      <p className="pin-caption">{paused
+        ? `${status?.user?.name ?? 'The cashier'}'s shift is paused and ${terminalId} is locked. The owner resumes it from the Admin Station.`
+        : `This screen unlocks by itself when the owner assigns a cashier to ${terminalId}.`}</p>
       <div className={online ? 'lock-connection ok' : 'lock-connection'}>
         <i />
         {online ? 'Connected to the store server · checking every 2 seconds' : error ?? 'Connecting…'}

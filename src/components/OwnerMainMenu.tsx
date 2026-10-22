@@ -303,7 +303,6 @@ export default function OwnerDashboard({
             <div className="rounded-xl p-4 bg-white border border-[#E4E0D6]">
               <div className="flex items-center justify-between mb-3">
                 <p className="font-[Space_Grotesk,sans-serif] text-[13px] font-semibold">Demand Forecast</p>
-                <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#E7EEE9] text-[#1E3A2F]">WMA</span>
               </div>
               <p className="text-[12px] font-semibold">Top items to reorder this week</p>
               <div className="mt-3 flex flex-col gap-2.5">

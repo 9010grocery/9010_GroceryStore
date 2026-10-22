@@ -414,3 +414,13 @@
 .pin-eye { position: absolute; top: 50%; right: 4px; width: 28px; height: 28px; display: grid; place-items: center; padding: 0; border: 0; border-radius: 2px; color: #8e958a; background: transparent; transform: translateY(-50%); cursor: pointer; }
 .pin-eye:hover, .pin-eye[aria-pressed="true"] { color: var(--green); }
 .pin-eye:focus-visible { outline-offset: -2px; }
+
+.row-menu { position: fixed; z-index: 120; width: 168px; padding: 4px; border: 1px solid #4b5148; border-radius: 3px; background: #282c27; box-shadow: 0 12px 30px #0008; }
+.row-menu button { width: 100%; display: block; padding: 7px 9px; border: 0; color: #bdc3b9; background: transparent; text-align: left; font-size: 10px; cursor: pointer; }
+.row-menu button:hover { color: #e7eadf; background: #3a4434; }
+
+/* Shift paused: the cashier's screen stays visible but blurred and locked until the owner resumes it. */
+.pause-backdrop { z-index: 200; background: #0c0d0b99; backdrop-filter: blur(8px); }
+.pause-modal { align-items: center; gap: 12px; padding: 28px 24px; text-align: center; }
+.pause-modal h2 { margin: 0; color: #e6e8e2; font: 600 18px 'Space Grotesk', sans-serif; }
+.pause-modal p { margin: 0; color: #c9cec4; font-size: 11px; line-height: 1.5; }

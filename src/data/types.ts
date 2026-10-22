@@ -54,6 +54,17 @@ export interface Employee {
   role: Role
   status: 'Active' | 'On leave' | 'Inactive'
   lastActive: string
+  /** A cashier's latest shift on a terminal (live mode only). */
+  shift?: EmployeeShift | null
+}
+
+export interface EmployeeShift {
+  state: 'on' | 'paused' | 'ended'
+  terminal: string
+  startedAt: string | null
+  pausedAt: string | null
+  endedAt: string | null
+  endedBy: 'cashier' | 'owner' | null
 }
 
 export type PaymentMethod = 'Cash' | 'GCash' | 'Card' | 'Maya'
@@ -173,7 +184,6 @@ export interface Shift {
   countedCash?: number
 }
 
-export type ForecastMethod = 'WMA' | 'SES' | 'Holt'
 
 export interface Settings {
   businessName: string
@@ -189,9 +199,6 @@ export interface Settings {
   payments: Record<PaymentMethod, boolean>
   /** Discount percent a cashier may give without the owner's PIN. Set on the server (Settings in Step 8); read-only here. */
   discountThreshold: number
-  forecastMethod: ForecastMethod
-  wmaWeights: number[]
-  sesAlpha: number
   serviceLevel: number // e.g. 0.95
   coverDays: number // target days of stock after lead time
   expiryWarningDays: number

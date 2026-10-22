@@ -13,11 +13,9 @@ import { loadProducts, loadPurchaseOrders, PO_TO_DB, receiveStockTx, type Actor,
 // nothing is ordered automatically. Writing stock (deliveries) goes through receiveStockTx in store.service.ts.
 
 const HISTORY_DAYS = 90
-const WEEKS = 12
 const DEFAULT_LEAD_DAYS = 3
 const COVER_DAYS = 7 // stock to hold beyond the reorder level
 const Z_SERVICE = 1.645 // 95% service level
-const WMA_WEIGHTS = [0.5, 0.3, 0.2]
 const ML_CONCURRENCY = 3
 const ML_CALL_TIMEOUT_MS = 30_000
 
@@ -28,7 +26,7 @@ const audit = (actor: Actor, action: string, details: Record<string, unknown>, c
 // Recommendations
 // ---------------------------------------------------------------------------
 
-export type ForecastModel = string // 'WMA', 'Reorder level', or the ML model name (e.g. 'XGBoost')
+export type ForecastModel = string // 'Reorder level', or the ML model name (e.g. 'XGBoost')
 
 export interface Recommendation {
   productId: string
@@ -69,17 +67,16 @@ function mlAvailable(): boolean {
   }
 }
 
-/** Weighted moving average of the last complete weeks, plus the error of that method on the same history (for the safety stock). */
-function weeklyWma(daily: number[]): { weekly: number; rmse: number } {
-  const complete = daily.slice(0, -1).slice(-WEEKS * 7) // today is a partial day
+/** Plain average units per day over the last 28 days, and the spread (standard deviation) of the last 4 complete weeks. These are only used to decide which products are worth a model call and to size the safety stock; they are not a forecast. */
+function recentSales(daily: number[]): { perDay: number; weeklySpread: number } {
+  const complete = daily.slice(0, -1) // today is a partial day
+  const last28 = complete.slice(-28)
+  const perDay = last28.length ? last28.reduce((a, b) => a + b, 0) / last28.length : 0
   const weeks: number[] = []
-  for (let i = 0; i < complete.length; i += 7) weeks.push(complete.slice(i, i + 7).reduce((a, b) => a + b, 0))
-  const total = WMA_WEIGHTS.reduce((a, b) => a + b, 0)
-  const at = (end: number) => WMA_WEIGHTS.reduce((sum, w, j) => sum + w * (weeks[end - 1 - j] ?? 0), 0) / total
-  const errors: number[] = []
-  for (let t = WMA_WEIGHTS.length; t < weeks.length; t++) errors.push(weeks[t] - at(t))
-  const rmse = errors.length ? Math.sqrt(errors.reduce((sum, e) => sum + e * e, 0) / errors.length) : 0
-  return { weekly: at(weeks.length), rmse }
+  for (let i = Math.max(0, complete.length - 28); i + 7 <= complete.length; i += 7) weeks.push(complete.slice(i, i + 7).reduce((a, b) => a + b, 0))
+  const mean = weeks.length ? weeks.reduce((a, b) => a + b, 0) / weeks.length : 0
+  const weeklySpread = weeks.length > 1 ? Math.sqrt(weeks.reduce((sum, v) => sum + (v - mean) ** 2, 0) / (weeks.length - 1)) : 0
+  return { perDay, weeklySpread }
 }
 
 interface Candidate {
@@ -152,7 +149,7 @@ async function loadCandidates(): Promise<Candidate[]> {
 
 interface MlResult { model: string; daily: number }
 
-/** Asks the Python service for a per-day forecast. Returns null (never throws) so the WMA / reorder-level fallback takes over. */
+/** Asks the Python service for a per-day forecast. Returns null (never throws) so the reorder-level rule takes over. */
 async function mlForecast(c: Candidate, minSamples: number): Promise<{ result: MlResult | null; error: string | null }> {
   const today = new Date()
   const history = c.daily.slice(0, -1).map((sales, i) => ({ date: new Date(today.getTime() - (HISTORY_DAYS - 1 - i) * 86_400_000).toISOString().slice(0, 10), sales }))
@@ -193,7 +190,7 @@ function build(c: Candidate, forecast: { model: ForecastModel; daily: number; rm
     // Not enough history to forecast: keep twice the reorder level on the shelf.
     target = Math.max(c.reorderLevel * 2, c.reorderLevel + 1)
     reason = stockPlusOrder <= reorderLevel
-      ? `At or below the reorder level of ${c.reorderLevel} and only ${c.historyDays} day(s) of sales history, so the reorder level is used instead of a forecast.`
+      ? `At or below the reorder level of ${c.reorderLevel}. No forecast is available for it yet (${c.historyDays} day(s) of sales), so the reorder level decides.`
       : 'Above its reorder level.'
   }
   const needs = forecast ? stockPlusOrder < reorderLevel : stockPlusOrder <= reorderLevel
@@ -226,25 +223,21 @@ function build(c: Candidate, forecast: { model: ForecastModel; daily: number; rm
 
 const PRIORITY_RANK = { urgent: 0, high: 1, normal: 2 } as const
 
-/** What to buy now. Products with enough sales history use the ML forecast when the Python service answers, else a weighted moving average; the rest use the reorder level. */
+/** What to buy now. Products with enough sales history use the ML forecast when the Python service answers; every other product uses its reorder level. */
 export async function recommendations() {
   const [candidates, minSamples] = await Promise.all([loadCandidates(), mlMinSamples()])
   const ml = { available: mlAvailable(), used: 0, error: null as string | null }
   const results = new Map<number, Recommendation>()
-  const wma = new Map<number, { weekly: number; rmse: number }>()
+  const spread = new Map<number, number>()
   const pending: Candidate[] = []
 
   for (const c of candidates) {
-    if (c.historyDays < minSamples) {
-      results.set(c.productId, build(c, null))
-      continue
-    }
-    const w = weeklyWma(c.daily)
-    wma.set(c.productId, w)
-    const rec = build(c, { model: 'WMA', daily: w.weekly / 7, rmse: w.rmse })
-    results.set(c.productId, rec)
+    results.set(c.productId, build(c, null))
+    if (c.historyDays < minSamples || !ml.available) continue
+    const sales = recentSales(c.daily)
+    spread.set(c.productId, sales.weeklySpread)
     // Only the products that might need an order are worth a Python call.
-    if (ml.available && (rec.suggestedQty > 0 || rec.onHand <= Math.max(rec.reorderPoint, rec.forecastDaily * (rec.leadTimeDays + COVER_DAYS)))) pending.push(c)
+    if (c.stock + c.onOrder <= Math.max(c.reorderLevel, sales.perDay * (c.lead + COVER_DAYS))) pending.push(c)
   }
 
   let next = 0
@@ -255,7 +248,7 @@ export async function recommendations() {
       if (error && !ml.error) ml.error = error
       if (!result) continue
       ml.used++
-      results.set(c.productId, build(c, { model: result.model, daily: result.daily, rmse: wma.get(c.productId)?.rmse ?? 0 }))
+      results.set(c.productId, build(c, { model: result.model, daily: result.daily, rmse: spread.get(c.productId) ?? 0 }))
     }
   }
   await Promise.all(Array.from({ length: Math.min(ML_CONCURRENCY, pending.length) }, worker))
