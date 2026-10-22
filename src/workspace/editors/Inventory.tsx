@@ -21,7 +21,7 @@ export function InventoryMetrics() {
     <div className="inventory-metric-grid">
       <Metric label="Active products" value={num(state.products.filter((p) => p.active).length)} change={`${out} out`} note="of stock" accent="green" />
       <Metric label="Inventory value" value={compactPeso(value)} change={compactPeso(retail)} note="at retail" accent="blue" />
-      <Metric label="Below AI reorder level" value={String(low.length).padStart(2, '0')} change={`${low.filter((l) => l.urgency === 'Urgent').length} urgent`} note="forecast-driven" accent="red" />
+      <Metric label="Below reorder level" value={String(low.length).padStart(2, '0')} change={`${low.filter((l) => l.urgency === 'Urgent').length} urgent`} note="forecast-driven" accent="red" />
       <Metric label="Near expiry" value={String(expiring.length).padStart(2, '0')} change={`next ${state.settings.expiryWarningDays} days`} note={`${analyses.filter((a) => a.atRiskUnits > 0).length} at risk`} accent="orange" />
     </div></div>
 }

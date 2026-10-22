@@ -5,6 +5,7 @@ import './styles/screens.css'
 import './styles/access.css'
 import './styles/step3.css'
 import './styles/step4.css'
+import './styles/step5.css'
 import App from './App.tsx'
 
 createRoot(document.getElementById('root')!).render(

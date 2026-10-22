@@ -29,7 +29,7 @@ function defaultLayout(workspace: WorkspaceName): LayoutNode {
     case 'Transactions': return makeSplit('horizontal', makePanel('Transactions'), makeSplit('vertical', makePanel('Returns & Refunds'), makePanel('Shift & Cash Drawer'), 0.6), 0.6)
     case 'Inventory': return makeSplit('horizontal', makeSplit('vertical', makePanel('Inventory Metrics'), makePanel('Purchasing'), 0.3), makePanel('Inventory Table'), 0.45)
     case 'Purchasing': return makeSplit('horizontal', makePanel('Purchasing'), makePanel('Purchase Orders'), 0.58)
-    case 'AI Insights': return makeSplit('horizontal', makeSplit('vertical', makePanel('WMA Forecast'), makePanel('Trend Analysis'), 0.52), makeSplit('vertical', makePanel('AI Insights'), makePanel('Model Explanation'), 0.5), 0.58)
+    case 'AI Insights': return makeSplit('horizontal', makeSplit('vertical', makePanel('Sales History'), makePanel('Trend Analysis'), 0.52), makePanel('AI Insights'), 0.58)
     case 'Reports': return makeSplit('horizontal', makePanel('Reports'), makePanel('Basket Analysis'), 0.55)
     case 'Waste': return makePanel('Waste Log')
     case 'Requests': return makePanel('Customer Requests')
@@ -669,7 +669,7 @@ function StatusBar() {
     {state.source === 'live'
       ? <span title={state.liveError ?? (state.liveSyncedAt ? `Last loaded ${time(state.liveSyncedAt)}` : undefined)}><i className={state.liveError ? 'status-offline' : 'status-online'} /> {state.liveError ? 'SERVER UNREACHABLE · SHOWING LAST DATA' : 'LIVE · STORE DATABASE'}</span>
       : <span title="The store server hasn't been reached yet, so there is no data to show."><i className="status-demo" /> NOT CONNECTED</span>}
-    <span>{state.transactions.length} RECEIPTS (7 DAYS) <b>•</b> AI MODEL {state.settings.forecastMethod}</span>
+    <span>{state.transactions.length} RECEIPTS (7 DAYS)</span>
     {critical > 0 && <span className="status-alert">{critical} CRITICAL ALERT{critical > 1 ? 'S' : ''}</span>}
     <span className="status-right">{time(now)} <b>·</b> 9010 GROCERY <b>v1.1.0</b></span>
   </footer>

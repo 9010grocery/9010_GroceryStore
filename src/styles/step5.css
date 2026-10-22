@@ -1,0 +1,19 @@
+/* Step 5: purchasing. */
+
+.purchasing-toolbar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; margin: 0 0 10px; }
+.purchasing-toolbar > div { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.data-table td small.priority { font-weight: 800; letter-spacing: .06em; color: var(--orange); }
+.data-table td small.priority.urgent { color: var(--red); }
+.data-table td small.reason-line { max-width: 340px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #8b9186; }
+
+.model-chip { display: inline-block; padding: 2px 7px; border: 1px solid #5d7a4f; border-radius: 999px; color: var(--green); background: #27301f; font: 800 8px 'Space Grotesk', sans-serif; letter-spacing: .08em; text-transform: uppercase; }
+.model-chip.fallback { border-color: #5c5f57; color: #aeb3a8; background: #2c302a; }
+
+.cell-input.wide { width: 110px; }
+.cell-input.date { width: 130px; color-scheme: dark; }
+
+.inline-confirm { display: grid; gap: 8px; margin: 12px 0 0; padding: 10px 12px; border: 1px solid #5a3a35; border-radius: 3px; background: #2b2220; }
+.inline-confirm > div:last-child { display: flex; gap: 8px; justify-content: flex-end; }
+
+.reorder-notice { margin: 10px 0 0; padding: 8px 10px; border: 1px solid #7a6330; border-radius: 3px; color: #f0d9a0; background: #342d1b; font-size: 11px; }

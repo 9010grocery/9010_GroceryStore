@@ -3,7 +3,7 @@ import type { WorkspaceName } from '../../data/types'
 import { AdminStationPanel } from '../../pages/AdminStation'
 import { DashboardPanel } from './Dashboard'
 import { DataImportPanel } from './DataImport'
-import { BasketPanel, ForecastPanel, InsightsFeedPanel, ModelPanel, TrendPanel } from './Insights'
+import { BasketPanel, InsightsFeedPanel, SalesHistoryPanel, TrendPanel } from './Insights'
 import { InventoryMetrics, InventoryTable } from './Inventory'
 import { EmployeesPanel, RequestsPanel, ShiftPanel, WastePanel } from './Operations'
 import { CartPanel, ProductGrid } from './PointOfSale'
@@ -27,8 +27,7 @@ export const editors = {
   'Purchase Orders': PurchaseOrdersPanel,
   'Waste Log': WastePanel,
   'AI Insights': InsightsFeedPanel,
-  'WMA Forecast': ForecastPanel,
-  'Model Explanation': ModelPanel,
+  'Sales History': SalesHistoryPanel,
   'Trend Analysis': TrendPanel,
   'Basket Analysis': BasketPanel,
   'Customer Requests': RequestsPanel,
@@ -44,7 +43,7 @@ export const editorGroups: { category: string; items: Editor[] }[] = [
   { category: 'Owner', items: ['Admin Station', 'Employees', 'Data Import'] },
   { category: 'Sales', items: ['Dashboard', 'Product Grid', 'Cart', 'Transactions', 'Returns & Refunds', 'Shift & Cash Drawer'] },
   { category: 'Stock', items: ['Inventory Metrics', 'Inventory Table', 'Purchasing', 'Purchase Orders', 'Waste Log'] },
-  { category: 'AI & Analytics', items: ['AI Insights', 'WMA Forecast', 'Model Explanation', 'Trend Analysis', 'Basket Analysis', 'Reports'] },
+  { category: 'AI & Analytics', items: ['AI Insights', 'Sales History', 'Trend Analysis', 'Basket Analysis', 'Reports'] },
   { category: 'Store', items: ['Customer Requests', 'Settings Navigation', 'Business Settings'] },
 ]
 
@@ -64,8 +63,7 @@ export const editorWorkspaces: Record<Editor, WorkspaceName[]> = {
   'Purchase Orders': ['Purchasing'],
   'Waste Log': ['Waste'],
   'AI Insights': ['AI Insights'],
-  'WMA Forecast': ['AI Insights'],
-  'Model Explanation': ['AI Insights'],
+  'Sales History': ['AI Insights'],
   'Trend Analysis': ['AI Insights'],
   'Basket Analysis': ['Reports'],
   'Customer Requests': ['Requests'],
