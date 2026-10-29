@@ -1,9 +1,9 @@
 import { useState } from 'react'
 import { allWorkspaces, OWNER_ONLY_WORKSPACES } from '../../data/defaults'
-import type { ForecastMethod, PaymentMethod, Role, Settings } from '../../data/types'
+import type { PaymentMethod, Role, Settings } from '../../data/types'
 import { useCurrentUser, useStore, type SettingsSection } from '../../store/StoreContext'
 import { useAuth } from '../../context/AuthContext'
-import { Field, Segmented } from '../ui'
+import { Field } from '../ui'
 import { MyAccount } from './MyAccount'
 
 const sections: SettingsSection[] = ['My account', 'Business profile', 'Tax & receipts', 'Payment methods', 'Inventory & AI', 'Notifications', 'Access & roles', 'Data']
@@ -51,18 +51,14 @@ export function SettingsPanel() {
       <div className="toggle-list">{(Object.keys(draft.payments) as PaymentMethod[]).map((m) => <label className="toggle-row" key={m}><div><b>{m}</b><small>{m === 'Cash' ? 'Calculates change automatically' : m === 'Card' ? 'Approval code required' : 'Reference number required'}</small></div><input type="checkbox" checked={draft.payments[m]} disabled={m === 'Cash'} onChange={(e) => set('payments', { ...draft.payments, [m]: e.target.checked })} /></label>)}</div>
     </>}
     {section === 'Inventory & AI' && <>
-      <h2>Inventory &amp; AI forecasting</h2><p>Controls how demand forecasts turn into reorder suggestions and expiry alerts.</p>
-      <Field label="DEFAULT FORECAST METHOD"><Segmented label="Forecast method" options={['WMA', 'SES', 'Holt'] as const} value={draft.forecastMethod} onChange={(m: ForecastMethod) => set('forecastMethod', m)} /></Field>
+      <h2>Inventory</h2><p>Controls how recent sales turn into reorder suggestions and expiry alerts.</p>
       <div className="form-row">
         <Field label="SERVICE LEVEL" hint="Higher = more safety stock, fewer stock-outs"><select value={draft.serviceLevel} onChange={(e) => set('serviceLevel', Number(e.target.value))}>{[0.8, 0.9, 0.95, 0.975, 0.99].map((v) => <option key={v} value={v}>{(v * 100).toFixed(1).replace('.0', '')}%</option>)}</select></Field>
         <Field label="TARGET DAYS OF COVER" hint="Stock to hold after the lead time"><input type="number" min={1} max={60} value={draft.coverDays} onChange={(e) => set('coverDays', Number(e.target.value))} /></Field>
       </div>
       <div className="form-row">
         <Field label="EXPIRY WARNING (DAYS)"><input type="number" min={1} max={60} value={draft.expiryWarningDays} onChange={(e) => set('expiryWarningDays', Number(e.target.value))} /></Field>
-        <Field label="SMOOTHING α (SES / HOLT)"><input type="number" min={0.05} max={0.95} step={0.05} value={draft.sesAlpha} onChange={(e) => set('sesAlpha', Number(e.target.value))} /></Field>
       </div>
-      <Field label="WMA WEIGHTS (MOST RECENT FIRST)" hint="Weights are normalised automatically."><div className="form-row">{draft.wmaWeights.map((w, i) => <input key={i} type="number" min={0} max={1} step={0.05} value={w} aria-label={`Weight ${i + 1}`} onChange={(e) => set('wmaWeights', draft.wmaWeights.map((x, j) => (j === i ? Number(e.target.value) : x)))} />)}
-        <button className="outline-button" onClick={() => set('wmaWeights', draft.wmaWeights.length < 4 ? [...draft.wmaWeights, 0.1] : draft.wmaWeights.slice(0, 2))}>{draft.wmaWeights.length < 4 ? '＋ WEEK' : '− WEEKS'}</button></div></Field>
     </>}
     {section === 'Notifications' && <>
       <h2>Notifications</h2><p>Choose which alerts appear on the dashboard and in the AI insights feed.</p>

@@ -60,7 +60,7 @@ export function MainMenu({ workspaces, onOpen }: { workspaces: WorkspaceName[]; 
   const lowStock = analyses.filter((a) => a.urgency !== 'OK' || a.product.stock <= a.product.reorderPoint)
   const expiring = analyses.filter((a) => a.expiryDays !== null && a.expiryDays <= state.settings.expiryWarningDays)
   const newRequests = state.requests.filter((r) => r.status === 'New').length
-  const pendingOrders = state.purchaseOrders.filter((p) => p.status === 'Draft' || p.status === 'Sent').length
+  const pendingOrders = state.purchaseOrders.filter((p) => p.status === 'Pending' || p.status === 'Partially received').length
   const names = (list: typeof analyses) => list.slice(0, 2).map((a) => a.product.name).join(', ') + (list.length > 2 ? `, +${list.length - 2}` : '')
   const forecast = [...analyses].sort((a, b) => b.weeklyDemand - a.weeklyDemand).slice(0, 3)
   const can = (w: WorkspaceName) => workspaces.includes(w)

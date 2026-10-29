@@ -53,7 +53,7 @@ export function TransactionsPanel() {
       </div>
       <div className="data-table-wrap"><table className="data-table clickable"><thead><tr>{['RECEIPT', 'TIME', 'CASHIER', 'ITEMS', 'PAYMENT', 'TOTAL', 'STATUS'].map((h) => <th key={h}>{h}</th>)}</tr></thead>
         <tbody>{visible.map((t) => <tr key={t.id} className={selected?.id === t.id ? 'selected' : ''} onClick={() => actions.setUi({ selectedTxnId: t.id })}>
-          <td><b>{t.number}</b><small>{t.customerType !== 'Regular' ? t.customerType.toUpperCase() : 'REGULAR'}</small></td>
+          <td><b>{t.number}</b><small>{t.customerType !== 'Regular' ? 'SENIOR/PWD' : 'REGULAR'}</small></td>
           <td>{range === 'Today' ? time(t.date) : relativeDay(t.date)}</td><td>{cashierName(t.cashierId)}</td><td>{t.lines.reduce((s, l) => s + l.qty, 0)}</td><td>{t.payment.method}</td><td><b>{peso(t.total)}</b></td><td><StatusPill value={t.status} /></td>
         </tr>)}</tbody></table>
         {rows.length === 0 && <Empty>No transactions match these filters.</Empty>}

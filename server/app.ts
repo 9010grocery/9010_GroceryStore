@@ -9,6 +9,8 @@ import { employeeRoutes } from './routes/employees.routes.js'
 import { healthRoutes } from './routes/health.routes.js'
 import { inventoryRoutes } from './routes/inventory.routes.js'
 import { posRoutes } from './routes/pos.routes.js'
+import { purchasingRoutes } from './routes/purchasing.routes.js'
+import { reportRoutes } from './routes/reports.routes.js'
 import { requestRoutes } from './routes/requests.routes.js'
 import { storeRoutes } from './routes/store.routes.js'
 import { terminalRoutes } from './routes/terminal.routes.js'
@@ -40,6 +42,8 @@ export function createApp(options: { appVersion: string }): Express {
   app.use('/api/waste', wasteRoutes)
   app.use('/api/requests', requestRoutes)
   app.use('/api/employees', employeeRoutes)
+  app.use('/api/purchasing', purchasingRoutes)
+  app.use('/api/reports', reportRoutes)
 
   app.use('/api', notFoundHandler)
   app.use(errorHandler)

@@ -58,7 +58,7 @@ export function DashboardPanel() {
       todayHourly, avgHourly: todayHourly.map((_, h) => pastDays.reduce((s, day) => s + day[h], 0) / pastDays.length),
       top: [...topToday].sort((a, b) => b[1] - a[1]).slice(0, 5).map(([label, value]) => ({ label, value })),
       reorder: analyses.filter((a) => a.urgency !== 'OK' || a.product.stock <= a.product.reorderPoint).length,
-      reorderNote: `${urgent.length} urgent`, reorderSub: 'AI reorder level',
+      reorderNote: `${urgent.length} urgent`, reorderSub: 'reorder level',
       expiringProducts: expiring.length, expiringUnits: expiring.reduce((s, e) => s + e.product.stock, 0),
       alertTitle: urgent.length + expiring.length,
       alertText: `${urgent.length} predicted stock-out${urgent.length === 1 ? '' : 's'} and ${expiring.length} near-expiry product${expiring.length === 1 ? '' : 's'}.`,

@@ -1,23 +1,12 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import type { CustomerRequest, Employee, RequestStatus, Role, WasteReason } from '../../data/types'
 import { netTotal, requestDemand } from '../../lib/ai'
 import { daysBetween, initials, peso, relativeDay, time } from '../../lib/format'
-import { apiErrorMessage, getEmployeeActivity, getEmployees, getRequests, getRequestsSummary, getWaste, getWasteSummary, type EmployeeActivity, type EmployeeRow, type RequestsSummary, type WasteRow } from '../../services/api'
+import { useServerData } from '../../hooks/useServerData'
+import { getEmployeeActivity, getEmployees, getRequests, getRequestsSummary, getWaste, getWasteSummary, type EmployeeActivity, type EmployeeRow, type RequestsSummary, type WasteRow } from '../../services/api'
 import { allowedWorkspaces, useAnalytics, useCurrentUser, useStore } from '../../store/StoreContext'
 import { BarList, Empty, Field, Metric, Modal, SERIES, Segmented, SectionHeading, StatusPill } from '../ui'
-
-/** Loads data from the server (live mode only) and reloads whenever `deps` change. Demo mode gets `null` and computes locally. */
-function useServerData<T>(enabled: boolean, load: () => Promise<T>, deps: unknown[]): { data: T | null; error: string | null } {
-  const [result, setResult] = useState<{ data: T | null; error: string | null }>({ data: null, error: null })
-  useEffect(() => {
-    if (!enabled) return
-    let cancelled = false
-    load().then((data) => { if (!cancelled) setResult({ data, error: null }) }, (error) => { if (!cancelled) setResult((r) => ({ data: r.data, error: apiErrorMessage(error) })) })
-    return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, ...deps])
-  return enabled ? result : { data: null, error: null }
-}
+     import { DeleteEmployeeButton } from './DeleteEmployee'
 
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const daysAgo = (n: number) => ymd(new Date(Date.now() - n * 86_400_000))
@@ -222,6 +211,7 @@ export function EmployeesPanel() {
           {e.role !== 'Owner' && (e.status === 'Inactive'
             ? <button className="outline-button" onClick={() => void toggle(e, true)}>ACTIVATE</button>
             : <button className="danger-button" onClick={() => (e.onTerminal ? setConfirming({ employee: e, onTerminal: e.onTerminal }) : void toggle(e, false))}>DEACTIVATE</button>)}
+                 <DeleteEmployeeButton employee={e} onDeleted={() => setVersion((v) => v + 1)} />
         </div></td></tr>)}</tbody></table>
       {rows.length === 0 && <Empty>No employees.</Empty>}</div>
     {editing && <EmployeeModal employee={editing} isNew={!state.employees.some((e) => e.id === editing.id)} onClose={() => setEditing(null)} onSave={(e) => { void actions.saveEmployee(e).then(() => setVersion((v) => v + 1)); actions.toast('Employee saved'); setEditing(null) }} />}

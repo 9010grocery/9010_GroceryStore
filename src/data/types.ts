@@ -144,15 +144,25 @@ export interface CustomerRequest {
   notes: string
 }
 
+export type PurchaseOrderStatus = 'Pending' | 'Partially received' | 'Completed' | 'Cancelled'
+
 export interface PurchaseOrder {
   id: string
   number: string
+  /** The supplier's name (free text; products name their supplier directly). */
   supplierId: string
   created: string
   expected: string
-  status: 'Draft' | 'Sent' | 'Received' | 'Cancelled'
-  lines: { productId: string; qty: number; cost: number }[]
+  status: PurchaseOrderStatus
+  /** `itemId` is the database row (needed to receive a delivery); `qty` is ordered, `received` is what has arrived. */
+  lines: { itemId?: number; productId: string; name?: string; unit?: string; qty: number; received: number; cost: number }[]
   source: 'AI suggestion' | 'Manual'
+  reorderListId?: string | null
+  notes?: string
+  cancelReason?: string | null
+  completedAt?: string | null
+  createdBy?: string
+  total?: number
 }
 
 export interface CashMovement {
@@ -174,7 +184,6 @@ export interface Shift {
   countedCash?: number
 }
 
-export type ForecastMethod = 'WMA' | 'SES' | 'Holt'
 
 export interface Settings {
   businessName: string
@@ -190,9 +199,6 @@ export interface Settings {
   payments: Record<PaymentMethod, boolean>
   /** Discount percent a cashier may give without the owner's PIN. Set on the server (Settings in Step 8); read-only here. */
   discountThreshold: number
-  forecastMethod: ForecastMethod
-  wmaWeights: number[]
-  sesAlpha: number
   serviceLevel: number // e.g. 0.95
   coverDays: number // target days of stock after lead time
   expiryWarningDays: number

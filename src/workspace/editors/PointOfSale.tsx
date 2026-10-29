@@ -136,7 +136,7 @@ export function CartPanel() {
 
   return <div className="cart-panel">
     <div className="cart-meta"><span>NEW SALE <b>· receipt no. is given when paid</b> · {user?.name ?? 'Cashier'}</span><div><button onClick={() => setShowHeld(true)}>HELD ({state.heldCarts.length})</button><button disabled={!lines.length} onClick={() => { actions.holdCart(`Sale ${state.heldCarts.length + 1} · ${time(new Date())}`); actions.toast('Sale put on hold', 'info') }}>HOLD</button><button disabled={!lines.length} onClick={actions.clearCart}>CLEAR</button></div></div>
-    <div className="cart-customer"><span className="eyebrow">CUSTOMER</span><Segmented label="Customer type" options={['Regular', 'Senior', 'PWD'] as const} value={state.customerType} onChange={actions.setCustomerType} /></div>
+    <div className="cart-customer"><span className="eyebrow">CUSTOMER</span><Segmented label="Customer type" options={['Regular', 'Senior/PWD'] as const} value={state.customerType === 'Regular' ? 'Regular' : 'Senior/PWD'} onChange={(kind) => actions.setCustomerType(kind === 'Regular' ? 'Regular' : 'Senior')} /></div>
     {isRegular && <div className="cart-discount">
       <span className="eyebrow">DISCOUNT</span>
       {biggest > 0 ? <span className={needsApproval ? 'applied needs-approval' : 'applied'}>
@@ -166,7 +166,7 @@ export function CartPanel() {
         <div><span>Subtotal ({lines.reduce((s, l) => s + l.qty, 0)} items)</span><b>{peso(totals.gross)}</b></div>
         {state.customerType !== 'Regular' ? <>
           <div><span>Less VAT (exempt)</span><b>−{peso(totals.lessVat)}</b></div>
-          <div><span>{state.customerType} discount 20%</span><b>−{peso(totals.discount)}</b></div>
+          <div><span>Senior/PWD discount 20%</span><b>−{peso(totals.discount)}</b></div>
         </> : <>
           {totals.discount > 0 && <div className="discount-line"><span>{uniformPercent ? `Discount ${uniformPercent}%` : 'Item discounts'}</span><b>−{peso(totals.discount)}</b></div>}
           <div><span>VAT included ({Math.round(state.settings.vatRate * 100)}%)</span><b>{peso(totals.vat)}</b></div>
@@ -227,7 +227,9 @@ function PaymentModal({ total, onClose, onPaid }: { total: number; onClose: () =
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const cash = Number(tendered) || 0
-  const valid = (method === 'Cash' ? cash >= total : reference.trim().length >= 4) && (!discounted || (seniorPwd.id.trim().length >= 3 && seniorPwd.name.trim().length >= 2))
+  const cents = (n: number) => Math.round(n * 100)
+  const enough = cents(cash) >= cents(total)
+  const valid = (method === 'Cash' ? enough : reference.trim().length >= 4) && (!discounted || (seniorPwd.id.trim().length >= 3 && seniorPwd.name.trim().length >= 2))
 
   async function pay() {
     if (!valid || busy) return
@@ -250,14 +252,14 @@ function PaymentModal({ total, onClose, onPaid }: { total: number; onClose: () =
 
   return <Modal title={`Collect ${peso(total)}`} eyebrow="PAYMENT" onClose={onClose} footer={<><button className="outline-button" disabled={busy} onClick={onClose}>CANCEL</button><button className="primary-button" disabled={!valid || busy} onClick={() => void pay()}>{busy ? 'SAVING…' : 'COMPLETE SALE →'}</button></>}>
     {discounted && <div className="form-row">
-      <Field label={`${state.customerType === 'PWD' ? 'PWD' : 'SENIOR CITIZEN'} ID NO.`}><input value={seniorPwd.id} maxLength={50} onChange={(e) => setSeniorPwd({ ...seniorPwd, id: e.target.value })} /></Field>
+      <Field label="SENIOR / PWD ID NO."><input value={seniorPwd.id} maxLength={50} onChange={(e) => setSeniorPwd({ ...seniorPwd, id: e.target.value })} /></Field>
       <Field label="NAME ON ID"><input value={seniorPwd.name} maxLength={100} onChange={(e) => setSeniorPwd({ ...seniorPwd, name: e.target.value })} /></Field>
     </div>}
     <div className="pay-methods">{methods.map((m) => <button key={m} className={method === m ? 'selected' : ''} onClick={() => setMethod(m)}><b>{m === 'Cash' ? '₱' : m === 'Card' ? '▭' : '◉'}</b>{m}</button>)}</div>
     {method === 'Cash' ? <>
       <Field label="CASH RECEIVED"><input autoFocus inputMode="decimal" value={tendered} placeholder="0.00" onChange={(e) => setTendered(e.target.value.replace(/[^\d.]/g, ''))} onKeyDown={(e) => { if (e.key === 'Enter') void pay() }} /></Field>
-      <div className="quick-cash">{quickCashOptions(total).map((amount) => <button key={amount} onClick={() => setTendered(String(amount))}>{peso(amount, amount % 1 ? 2 : 0)}</button>)}</div>
-      <div className={cash >= total ? 'change-due ok' : 'change-due'}><span>{cash >= total ? 'CHANGE DUE' : 'REMAINING'}</span><strong>{peso(Math.abs(cash - total))}</strong></div>
+      <div className="quick-cash"><button onClick={() => setTendered(String(total))}>EXACT {peso(total)}</button>{quickCashOptions(total).filter((amount) => cents(amount) !== cents(total)).map((amount) => <button key={amount} onClick={() => setTendered(String(amount))}>{peso(amount, amount % 1 ? 2 : 0)}</button>)}</div>
+      <div className={enough ? 'change-due ok' : 'change-due'}><span>{enough ? 'CHANGE DUE' : 'REMAINING'}</span><strong>{peso(Math.abs(cents(cash) - cents(total)) / 100)}</strong></div>
     </> : <Field label={method === 'Card' ? 'APPROVAL CODE' : `${method.toUpperCase()} REFERENCE NO.`} hint="Enter the reference shown on the customer's confirmation (min. 4 characters)."><input autoFocus value={reference} onChange={(e) => setReference(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void pay() }} /></Field>}
     {error && <p className="pin-error" role="alert">{error}</p>}
   </Modal>
@@ -285,15 +287,15 @@ export function Receipt({ txn }: { txn: Transaction }) {
       {(s.machineSerial || s.permitNumber) && <span>{[s.machineSerial && `MIN ${s.machineSerial}`, s.permitNumber && `PTU ${s.permitNumber}`].filter(Boolean).join(' · ')}</span>}
     </div>
     {reprints > 0 && <div className="receipt-reprint">REPRINT · COPY {reprints}</div>}
-    <div className="receipt-meta"><span>{txn.number}</span><span>{shortDate(txn.date)} {time(txn.date)}</span><span>Cashier: {cashier}</span><span>{txn.terminalId && txn.terminalId !== 'PC-00' ? `Terminal ${txn.terminalId}` : txn.customerType}</span></div>
-    {discounted && (txn.seniorPwdId || txn.seniorPwdName) && <div className="receipt-id-block"><span>{txn.customerType === 'PWD' ? 'PWD' : 'SC'} ID: {txn.seniorPwdId}</span><span>Name: {txn.seniorPwdName}</span></div>}
+    <div className="receipt-meta"><span>{txn.number}</span><span>{shortDate(txn.date)} {time(txn.date)}</span><span>Cashier: {cashier}</span><span>{txn.terminalId && txn.terminalId !== 'PC-00' ? `Terminal ${txn.terminalId}` : txn.customerType === 'Regular' ? 'Regular' : 'Senior/PWD'}</span></div>
+    {discounted && (txn.seniorPwdId || txn.seniorPwdName) && <div className="receipt-id-block"><span>SC/PWD ID: {txn.seniorPwdId}</span><span>Name: {txn.seniorPwdName}</span></div>}
     <div className="receipt-lines">{txn.lines.map((line) => <Fragment key={line.productId}>
       <div><span>{line.name}</span><span>{line.qty} × {line.price.toFixed(2)}</span><b>{(line.qty * line.price).toFixed(2)}</b></div>
       {!discounted && line.discountPercent ? <div className="receipt-line-discount"><span>Less {line.discountPercent}%</span><span /><b>-{(line.net !== null && line.net !== undefined ? line.qty * line.price - line.net : (line.qty * line.price * line.discountPercent) / 100).toFixed(2)}</b></div> : null}
     </Fragment>)}</div>
     <div className="receipt-totals">
       <div><span>Subtotal</span><b>{txn.gross.toFixed(2)}</b></div>
-      {discounted && <><div><span>Less VAT</span><b>-{txn.lessVat.toFixed(2)}</b></div><div><span>{txn.customerType} disc. 20%</span><b>-{txn.discount.toFixed(2)}</b></div></>}
+      {discounted && <><div><span>Less VAT</span><b>-{txn.lessVat.toFixed(2)}</b></div><div><span>SC/PWD disc. 20%</span><b>-{txn.discount.toFixed(2)}</b></div></>}
       {!discounted && txn.discount > 0 && <div><span>Discount{txn.discountPercent ? ` ${txn.discountPercent}%` : ''}</span><b>-{txn.discount.toFixed(2)}</b></div>}
       <div className="grand"><span>TOTAL</span><b>{peso(txn.total)}</b></div>
       <div><span>{txn.payment.method}{txn.payment.reference ? ` · ${txn.payment.reference}` : ''}</span><b>{txn.payment.tendered.toFixed(2)}</b></div>

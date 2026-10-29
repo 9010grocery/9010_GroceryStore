@@ -1,5 +1,5 @@
 import axios, { AxiosError, type AxiosInstance } from 'axios'
-import type { CustomerRequest, Employee, PaymentMethod, RequestStatus, Transaction, WasteEntry, WasteReason } from '../data/types'
+import type { CustomerRequest, Employee, PaymentMethod, PurchaseOrder, PurchaseOrderStatus, RequestStatus, Transaction, WasteEntry, WasteReason } from '../data/types'
 import type { DesktopConfig } from '../types/desktop'
 
 // One axios instance for the whole UI. The server address comes from the Electron settings
@@ -277,6 +277,8 @@ export interface StoreSnapshot {
   waste: WasteEntry[]
   requests: CustomerRequest[]
   employees: Employee[]
+  /** Open purchase orders (empty on a cashier terminal). */
+  purchaseOrders: PurchaseOrder[]
   vatRate: number
   /** Empty until the owner names the store. */
   storeName: string
@@ -512,3 +514,137 @@ export interface BatchRow {
 export const getBatches = (productId: string) => api.get<BatchRow[]>(`/api/inventory/batches/${productId}`).then((r) => r.data)
 export const putBatchMarkdown = (batchId: string, percent: number | null) => api.put(`/api/inventory/batches/${batchId}/markdown`, { percent }).then((r) => r.data)
 export const putBatchExpiry = (batchId: string, expiry_date: string | null) => api.put(`/api/inventory/batches/${batchId}/expiry`, { expiry_date }).then((r) => r.data)
+
+// ---------------------------------------------------------------------------
+// Purchasing — server/routes/purchasing.routes.ts (owner only)
+// ---------------------------------------------------------------------------
+
+export interface Recommendation {
+  productId: string
+  name: string
+  unit: string
+  supplier: string | null
+  onHand: number
+  onOrder: number
+  reorderPoint: number
+  leadTimeDays: number
+  forecastDaily: number
+  forecastWeekly: number
+  safetyStock: number
+  daysOfCover: number | null
+  suggestedQty: number
+  unitCost: number
+  lineCost: number
+  /** 'Reorder level', or the ML model that won the backtest (e.g. 'XGBoost'). */
+  model: string
+  historyDays: number
+  reason: string
+  priority: 'urgent' | 'high' | 'normal'
+  onList: boolean
+}
+export interface Recommendations {
+  generatedAt: string
+  minSamples: number
+  ml: { available: boolean; used: number; error: string | null }
+  summary: { count: number; urgent: number; totalCost: number }
+  items: Recommendation[]
+}
+export type ReorderListStatus = 'pending' | 'approved' | 'rejected' | 'completed'
+export interface ReorderListSummary {
+  id: string
+  status: ReorderListStatus
+  createdAt: string
+  createdBy: string
+  decidedAt: string | null
+  decidedBy: string | null
+  notes: string
+  rejectedReason: string | null
+  itemCount: number
+  suggestedCost: number
+  approvedCost: number
+  purchaseOrders: number
+}
+export interface ReorderListItem {
+  itemId: number
+  productId: string
+  name: string
+  unit: string
+  supplier: string | null
+  onHand: number
+  reorderPoint: number
+  unitCost: number
+  suggestedQty: number
+  approvedQty: number | null
+  approved: boolean
+  reason: string
+}
+export type ReorderList = ReorderListSummary & { items: ReorderListItem[] }
+export interface ReceiveLinePayload { item_id: number; qty: number; batch_number?: string; expiry_date?: string; unit_cost?: number }
+export interface ReceiveResult {
+  order: PurchaseOrder
+  products: StoreProduct[]
+  belowReorder: { productId: string; name: string; stock: number; reorderPoint: number }[]
+}
+
+export const getRecommendations = () => api.get<Recommendations>('/api/purchasing/recommendations', { timeout: 120_000 }).then((r) => r.data)
+export const getReorderLists = (status?: ReorderListStatus) => api.get<ReorderListSummary[]>('/api/purchasing/reorder-lists', { params: status ? { status } : undefined }).then((r) => r.data)
+export const getReorderList = (id: string) => api.get<ReorderList>(`/api/purchasing/reorder-lists/${id}`).then((r) => r.data)
+export const postReorderList = (body: { items?: { product_id: string; qty: number; reason?: string }[]; notes?: string }) => api.post<ReorderList>('/api/purchasing/reorder-lists', body, { timeout: 120_000 }).then((r) => r.data)
+export const postApproveReorderList = (id: string, items: { item_id: number; qty: number }[]) => api.post<ReorderList>(`/api/purchasing/reorder-lists/${id}/approve`, { items }).then((r) => r.data)
+export const postRejectReorderList = (id: string, reason: string) => api.post<ReorderList>(`/api/purchasing/reorder-lists/${id}/reject`, { reason }).then((r) => r.data)
+export const getPurchaseOrders = (filters: { status?: 'Open' | 'All' | PurchaseOrderStatus; q?: string }) => api.get<PurchaseOrder[]>('/api/purchasing/orders', { params: clean(filters) }).then((r) => r.data)
+export const postPurchaseOrders = (body: { reorder_list_id?: string; supplier?: string; expected_delivery?: string; notes?: string; items?: { product_id: string; qty: number; unit_cost?: number }[] }) =>
+  api.post<PurchaseOrder[]>('/api/purchasing/orders', body).then((r) => r.data)
+export const postReceiveOrder = (id: string, lines: ReceiveLinePayload[], note?: string) => api.post<ReceiveResult>(`/api/purchasing/orders/${id}/receive`, { lines, note }).then((r) => r.data)
+export const postCancelOrder = (id: string, reason: string) => api.post<PurchaseOrder>(`/api/purchasing/orders/${id}/cancel`, { reason }).then((r) => r.data)
+export const postCloseOrder = (id: string, reason: string) => api.post<PurchaseOrder>(`/api/purchasing/orders/${id}/close`, { reason }).then((r) => r.data)
+
+// ---------------------------------------------------------------------------
+// Reports (owner only)
+// ---------------------------------------------------------------------------
+
+export type ReportKind = 'text' | 'int' | 'money' | 'pct'
+export type ReportCell = string | number | null
+export interface ReportTable { title?: string; columns: { label: string; kind: ReportKind }[]; rows: ReportCell[][]; totals?: ReportCell[] }
+export interface ReadingFigures {
+  scope: 'shift' | 'day'; date: string; terminal_id: string; terminals: string[]; cashier: string | null; shift_start: string | null; shift_end: string | null
+  beginning_invoice: string | null; ending_invoice: string | null; transaction_count: number
+  gross_sales: number; less_vat_sc_pwd: number; discount_sc_pwd: number; discount_other: number; voids_count: number; voids: number; refunds_count: number; refunds: number; net_sales: number
+  vatable_sales: number; vat_amount: number; vat_exempt_sales: number
+  payments: { method: string; count: number; amount: number; refunds: number }[]; cash_expected: number
+  beginning_grand_total: number | null; ending_grand_total: number | null
+}
+export interface ReportDoc {
+  type: string; title: string; period: string
+  business: { name: string; tin: string; address: string }
+  generated_at: string; generated_by: string
+  summary: { label: string; value: ReportCell; kind: ReportKind }[]
+  tables: ReportTable[]; filters: string[]
+  reading?: { reading_id: number | null; reading_no: number | null; kind: 'X' | 'Z'; stored: boolean; source: string | null; payload: ReadingFigures }
+  already_closed?: boolean
+}
+export interface ReportParams { from?: string; to?: string; product_id?: string; cashier_id?: string; terminal_id?: string; group?: 'day' | 'cashier' | 'terminal' | 'payment' | 'product'; date?: string; session_id?: string }
+export interface ReportShift { session_id: number; terminal_id: string; cashier: string; active: boolean; start: string; end: string | null; end_reason: string | null; receipts: number; has_reading: boolean }
+export interface GrandTotal { accumulated_total: number; accumulated_voids: number; accumulated_refunds: number; last_z_reading_at: string | null; last_z_date: string | null; last_z_no: number | null }
+
+export const getReport = (type: string, params: ReportParams) => api.get<ReportDoc>(`/api/reports/${type}`, { params: clean(params as Record<string, unknown>) }).then((r) => r.data)
+export const getXReading = (sessionId: number) => api.get<ReportDoc>(`/api/reports/x-reading/s${sessionId}`).then((r) => r.data)
+export const postXReading = (sessionId: number) => api.post<ReportDoc>(`/api/reports/x-reading/s${sessionId}`).then((r) => r.data)
+export const postZReading = (date: string) => api.post<ReportDoc>('/api/reports/z-reading', { date }).then((r) => r.data)
+export const getReportShifts = (from: string, to: string) => api.get<{ shifts: ReportShift[] }>('/api/reports/shifts', { params: { from, to } }).then((r) => r.data.shifts)
+export const getGrandTotal = () => api.get<GrandTotal>('/api/reports/grand-total').then((r) => r.data)
+
+/** Downloads a report as a PDF or CSV file. Goes through axios so the owner's sign-in is attached. */
+export async function downloadReport(type: string, params: ReportParams, format: 'pdf' | 'csv'): Promise<void> {
+  const res = await api.get<Blob>(`/api/reports/export/${type}`, { params: { ...clean(params as Record<string, unknown>), format }, responseType: 'blob', timeout: 60_000 })
+  const disposition = String(res.headers['content-disposition'] ?? '')
+  const name = /filename="([^"]+)"/.exec(disposition)?.[1] ?? `${type}.${format}`
+  const url = URL.createObjectURL(res.data)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = name
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 2000)
+}

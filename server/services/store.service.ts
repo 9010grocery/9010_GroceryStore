@@ -362,6 +362,55 @@ export async function loadEmployees(db: Db, userId?: number) {
   }))
 }
 
+export type PurchaseOrderStatusUi = 'Pending' | 'Partially received' | 'Completed' | 'Cancelled'
+export const PO_TO_UI: Record<string, PurchaseOrderStatusUi> = { pending: 'Pending', partially_received: 'Partially received', completed: 'Completed', cancelled: 'Cancelled' }
+export const PO_TO_DB: Record<PurchaseOrderStatusUi, string> = { Pending: 'pending', 'Partially received': 'partially_received', Completed: 'completed', Cancelled: 'cancelled' }
+
+/** Purchase orders with their lines. `where` is plain SQL over `po` (purchase_orders); `params` are its values. */
+export async function loadPurchaseOrders(db: Db, where = "po.status IN ('pending', 'partially_received')", params: unknown[] = []) {
+  const [orders] = await db.query<RowDataPacket[]>(
+    `SELECT po.po_id, po.po_number, po.reorder_list_id, po.supplier, po.expected_delivery, po.status, po.created_at, po.completed_at, po.notes, po.cancel_reason,
+            CONCAT(u.first_name, ' ', u.last_name) AS created_by_name
+       FROM purchase_orders po JOIN users u ON u.user_id = po.created_by
+      WHERE ${where} ORDER BY po.po_id DESC`,
+    params,
+  )
+  if (!orders.length) return []
+  const [items] = await db.query<RowDataPacket[]>(
+    `SELECT i.po_item_id, i.po_id, i.product_id, i.ordered_quantity, i.received_quantity, i.unit_cost, p.product_name, p.unit_of_measure
+       FROM purchase_order_items i JOIN products p ON p.product_id = i.product_id
+      WHERE i.po_id IN (?) ORDER BY i.po_item_id`,
+    [orders.map((o) => o.po_id)],
+  )
+  return orders.map((o) => {
+    const lines = items.filter((i) => i.po_id === o.po_id).map((i) => ({
+      itemId: Number(i.po_item_id),
+      productId: `p${i.product_id}`,
+      name: i.product_name as string,
+      unit: (i.unit_of_measure as string | null) ?? 'pc',
+      qty: Number(i.ordered_quantity),
+      received: Number(i.received_quantity),
+      cost: Number(i.unit_cost ?? 0),
+    }))
+    return {
+      id: `po${o.po_id}`,
+      number: o.po_number as string,
+      supplierId: (o.supplier as string | null) ?? '',
+      created: toIso(o.created_at) ?? '',
+      expected: o.expected_delivery ? String(o.expected_delivery).slice(0, 10) : '',
+      status: PO_TO_UI[o.status as string] ?? 'Pending',
+      lines,
+      source: o.reorder_list_id ? ('AI suggestion' as const) : ('Manual' as const),
+      reorderListId: o.reorder_list_id ? `rl${o.reorder_list_id}` : null,
+      notes: (o.notes as string | null) ?? '',
+      cancelReason: (o.cancel_reason as string | null) ?? null,
+      completedAt: o.completed_at ? toIso(o.completed_at) : null,
+      createdBy: o.created_by_name as string,
+      total: round2(lines.reduce((sum, l) => sum + l.qty * l.cost, 0)),
+    }
+  })
+}
+
 /** Daily units per product for the 12 weeks before the itemised receipts, oldest first (like mockData history). */
 async function loadHistory(db: Db) {
   const [rows] = await db.query<RowDataPacket[]>(
@@ -387,7 +436,7 @@ async function loadHistory(db: Db) {
 /** Everything the workspace screens show, in one request. */
 export async function loadSnapshot() {
   const db = getPool()
-  const [products, transactions, history, waste, requests, employees, rate, business, threshold] = await Promise.all([
+  const [products, transactions, history, waste, requests, employees, rate, business, threshold, purchaseOrders] = await Promise.all([
     loadProducts(db),
     loadTransactions(db, 't.transaction_date >= DATE_SUB(CURDATE(), INTERVAL ? DAY)', [DETAIL_DAYS - 1]),
     loadHistory(db),
@@ -397,9 +446,10 @@ export async function loadSnapshot() {
     vatRate(db),
     businessInfo(db),
     discountThreshold(db),
+    loadPurchaseOrders(db),
   ])
   return {
-    products, transactions, history, waste, requests, employees, vatRate: rate,
+    products, transactions, history, waste, requests, employees, purchaseOrders, vatRate: rate,
     storeName: business.name, storeTin: business.tin, storeAddress: business.address, discountThreshold: threshold,
     serverTime: new Date().toISOString(),
   }
@@ -792,50 +842,53 @@ export interface ReceiveInput {
  * A unit cost, when given, becomes the product's current cost.
  */
 export async function receiveStock(actor: Actor, productId: number, input: ReceiveInput) {
-  const batchNumber = input.batch_number?.trim() || null
-  const note = input.note?.trim() || ''
-  await withTransaction(async (connection) => {
-    // Locking the product row makes two deliveries for it wait for each other.
-    const [products] = await connection.query<RowDataPacket[]>('SELECT product_name, cost_price FROM products WHERE product_id = ? AND deleted_at IS NULL FOR UPDATE', [productId])
-    const product = products[0]
-    if (!product) throw HttpError.notFound('Product not found')
-    if (input.expiry_date) {
-      const [past] = await connection.query<RowDataPacket[]>('SELECT ? < CURDATE() AS expired', [input.expiry_date])
-      if (Number(past[0].expired)) throw HttpError.badRequest('That expiry date has already passed. Check the date on the box.')
-      await assertSaneExpiry(connection, input.expiry_date)
-    }
-
-    const label = `Delivery${batchNumber ? ` · batch ${batchNumber}` : ''}${note ? `: ${note}` : ''}`
-    let inventoryId: number
-    const existing = batchNumber
-      ? (await connection.query<RowDataPacket[]>('SELECT inventory_id, expiry_date FROM inventory WHERE product_id = ? AND batch_number = ? ORDER BY inventory_id LIMIT 1 FOR UPDATE', [productId, batchNumber]))[0][0]
-      : undefined
-    if (existing) {
-      const currentExpiry = (existing.expiry_date as string | null)?.slice(0, 10) ?? null
-      if (currentExpiry !== (input.expiry_date ?? null)) {
-        throw HttpError.conflict(`Batch ${batchNumber} is already on file with ${currentExpiry ? `expiry ${currentExpiry}` : 'no expiry date'}. Use a different batch number if this is a different lot.`)
-      }
-      inventoryId = existing.inventory_id as number
-      await connection.execute('UPDATE inventory SET quantity_on_hand = quantity_on_hand + ? WHERE inventory_id = ?', [input.qty, inventoryId])
-    } else {
-      const [created] = await connection.execute<ResultSetHeader>('INSERT INTO inventory (product_id, quantity_on_hand, batch_number, expiry_date) VALUES (?, ?, ?, ?)', [
-        productId, input.qty, batchNumber, input.expiry_date ?? null,
-      ])
-      inventoryId = created.insertId
-    }
-    await connection.execute(
-      'INSERT INTO inventory_adjustments (inventory_id, user_id, session_id, quantity_change, reason, adjustment_type) VALUES (?, ?, ?, ?, ?, ?)',
-      [inventoryId, actor.user_id, actor.session_id, input.qty, label.slice(0, 255), 'receive'],
-    )
-    const costChanged = input.unit_cost !== undefined && input.unit_cost !== null && Number(product.cost_price ?? 0) !== input.unit_cost
-    if (costChanged) await connection.execute('UPDATE products SET cost_price = ? WHERE product_id = ?', [input.unit_cost ?? null, productId])
-    await logAudit({
-      user_id: actor.user_id, session_id: actor.session_id, terminal_id: actor.terminal_id, ip_address: actor.ip_address, action: 'RECEIVE_STOCK', module: 'INVENTORY',
-      details: { product_id: productId, qty: input.qty, batch_number: batchNumber, expiry_date: input.expiry_date ?? null, ...(costChanged ? { old_cost: Number(product.cost_price ?? 0), new_cost: input.unit_cost } : {}) },
-    }, connection)
-  })
+  await withTransaction((connection) => receiveStockTx(connection, actor, productId, input))
   const [product] = await loadProducts(getPool(), productId)
   return product
+}
+
+/** The body of receiveStock, for callers that already hold a transaction (a purchase order delivery books several products at once). */
+export async function receiveStockTx(connection: PoolConnection, actor: Actor, productId: number, input: ReceiveInput): Promise<void> {
+  const batchNumber = input.batch_number?.trim() || null
+  const note = input.note?.trim() || ''
+  // Locking the product row makes two deliveries for it wait for each other.
+  const [products] = await connection.query<RowDataPacket[]>('SELECT product_name, cost_price FROM products WHERE product_id = ? AND deleted_at IS NULL FOR UPDATE', [productId])
+  const product = products[0]
+  if (!product) throw HttpError.notFound('Product not found')
+  if (input.expiry_date) {
+    const [past] = await connection.query<RowDataPacket[]>('SELECT ? < CURDATE() AS expired', [input.expiry_date])
+    if (Number(past[0].expired)) throw HttpError.badRequest('That expiry date has already passed. Check the date on the box.')
+    await assertSaneExpiry(connection, input.expiry_date)
+  }
+
+  const label = `Delivery${batchNumber ? ` · batch ${batchNumber}` : ''}${note ? `: ${note}` : ''}`
+  let inventoryId: number
+  const existing = batchNumber
+    ? (await connection.query<RowDataPacket[]>('SELECT inventory_id, expiry_date FROM inventory WHERE product_id = ? AND batch_number = ? ORDER BY inventory_id LIMIT 1 FOR UPDATE', [productId, batchNumber]))[0][0]
+    : undefined
+  if (existing) {
+    const currentExpiry = (existing.expiry_date as string | null)?.slice(0, 10) ?? null
+    if (currentExpiry !== (input.expiry_date ?? null)) {
+      throw HttpError.conflict(`Batch ${batchNumber} is already on file with ${currentExpiry ? `expiry ${currentExpiry}` : 'no expiry date'}. Use a different batch number if this is a different lot.`)
+    }
+    inventoryId = existing.inventory_id as number
+    await connection.execute('UPDATE inventory SET quantity_on_hand = quantity_on_hand + ? WHERE inventory_id = ?', [input.qty, inventoryId])
+  } else {
+    const [created] = await connection.execute<ResultSetHeader>('INSERT INTO inventory (product_id, quantity_on_hand, batch_number, expiry_date) VALUES (?, ?, ?, ?)', [
+      productId, input.qty, batchNumber, input.expiry_date ?? null,
+    ])
+    inventoryId = created.insertId
+  }
+  await connection.execute(
+    'INSERT INTO inventory_adjustments (inventory_id, user_id, session_id, quantity_change, reason, adjustment_type) VALUES (?, ?, ?, ?, ?, ?)',
+    [inventoryId, actor.user_id, actor.session_id, input.qty, label.slice(0, 255), 'receive'],
+  )
+  const costChanged = input.unit_cost !== undefined && input.unit_cost !== null && Number(product.cost_price ?? 0) !== input.unit_cost
+  if (costChanged) await connection.execute('UPDATE products SET cost_price = ? WHERE product_id = ?', [input.unit_cost ?? null, productId])
+  await logAudit({
+    user_id: actor.user_id, session_id: actor.session_id, terminal_id: actor.terminal_id, ip_address: actor.ip_address, action: 'RECEIVE_STOCK', module: 'INVENTORY',
+    details: { product_id: productId, qty: input.qty, batch_number: batchNumber, expiry_date: input.expiry_date ?? null, ...(costChanged ? { old_cost: Number(product.cost_price ?? 0), new_cost: input.unit_cost } : {}) },
+  }, connection)
 }
 
 /**

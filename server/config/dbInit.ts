@@ -7,7 +7,7 @@ import mysql, { type Connection, type RowDataPacket } from 'mysql2/promise'
 import type { Env } from './env.js'
 
 /** Bump when a new file is added to database/migrations (002_….sql is version 2, and so on). */
-export const SCHEMA_VERSION = 9
+export const SCHEMA_VERSION = 11
 
 /** The account every new system starts with. The first sign-in has to replace all of it (see must_change_credentials). */
 export const DEFAULT_OWNER = { username: 'admin', pin: '000000', first_name: 'Store', last_name: 'Owner' }

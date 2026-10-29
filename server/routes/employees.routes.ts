@@ -1,6 +1,7 @@
 import { Router } from 'express'
 import { z } from 'zod'
 import { actorFor, requireOwnerUser, requireStoreUser } from '../middleware/storeAuth.js'
+import { deleteEmployee } from '../services/employeeDelete.service.js'
 import { employeeActivity, listEmployees } from '../services/employees.service.js'
 import { loadEmployees, saveEmployee } from '../services/store.service.js'
 import { getPool } from '../config/db.js'
@@ -44,6 +45,14 @@ async function setActive(req: import('express').Request, res: import('express').
 /** Locks the cashier out: an open shift is ended and the terminal goes back to waiting. The owner account can't be deactivated. */
 employeeRoutes.post('/:id/deactivate', (req, res) => setActive(req, res, 'Inactive'))
 employeeRoutes.post('/:id/activate', (req, res) => setActive(req, res, 'Active'))
+
+/** Permanently deletes a cashier who has no sales, refunds, stock, waste or other history. Owner account and yourself: never. */
+employeeRoutes.delete('/:id', async (req, res) => {
+  const actor = await actorFor(req)
+  const result = await deleteEmployee(actor, id('u').parse(req.params.id))
+  req.auditLogged = true
+  res.json(result)
+})
 
 /** Query: days (default 30). Shifts, sales, voids and refunds for one employee. */
 employeeRoutes.get('/:id/activity', async (req, res) => {
