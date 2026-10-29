@@ -1,86 +1,167 @@
 import { useState } from 'react'
-import type { Transaction } from '../../data/types'
-import { netTotal } from '../../lib/ai'
-import { dateKey, daysBetween, downloadCsv, num, peso, shortDate, time } from '../../lib/format'
+import { useServerData } from '../../hooks/useServerData'
+import { peso } from '../../lib/format'
+import {
+  apiErrorMessage, downloadReport, getAdminTerminals, getGrandTotal, getReport, getReportShifts, getXReading, postXReading, postZReading,
+  type ReportCell, type ReportDoc, type ReportKind, type ReportParams, type ReportShift,
+} from '../../services/api'
 import { useStore } from '../../store/StoreContext'
-import { Modal, Segmented } from '../ui'
+import { Empty, Modal, Segmented } from '../ui'
 
-type Range = 'Today' | 'Yesterday' | '7 days'
-type ReportName = 'X-Reading' | 'Z-Reading' | 'e-Journal' | 'VAT Summary' | 'Sales by Item' | 'Inventory Valuation' | 'Waste Report' | 'Cashier Performance'
+// Report Center (spec Module 10): every number comes from the store's database through /api/reports, and the PDF and CSV
+// files are made by the server from the same report, so the screen, the printout and the files always agree.
 
-interface ReportData { summary: [string, string][]; headers: string[]; rows: (string | number)[][] }
+const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+const daysAgo = (n: number) => ymd(new Date(Date.now() - n * 86_400_000))
 
-const catalog: [ReportName, string, string, string][] = [
-  ['X-Reading', 'Mid-shift sales summary', 'SHIFT REPORT', '↗'], ['Z-Reading', 'End-of-day register close', 'DAILY CLOSE', '▥'],
-  ['e-Journal', 'Electronic sales journal', 'BIR COMPLIANT', '≡'], ['VAT Summary', 'Output tax by day', 'TAX SUMMARY', '₱'],
-  ['Sales by Item', 'Units, revenue & margin', 'OPERATIONS', '▤'], ['Inventory Valuation', 'Stock value at cost & retail', 'INVENTORY', '◫'],
-  ['Waste Report', 'Write-offs by reason & item', 'LOSS PREVENTION', '⌁'], ['Cashier Performance', 'Sales & refunds by cashier', 'PEOPLE', '♙'],
+type ReportType = 'x-reading' | 'z-reading' | 'e-journal' | 'vat-summary' | 'sales' | 'inventory' | 'waste' | 'purchasing' | 'requests'
+
+const catalog: { type: ReportType; name: string; description: string; tag: string; icon: string }[] = [
+  { type: 'x-reading', name: 'X-Reading', description: 'Sales of one cashier shift', tag: 'SHIFT REPORT', icon: '↗' },
+  { type: 'z-reading', name: 'Z-Reading', description: 'Close of the day, all terminals', tag: 'DAILY CLOSE', icon: '▥' },
+  { type: 'e-journal', name: 'e-Journal', description: 'Every sale, void and refund', tag: 'BIR COMPLIANT', icon: '≡' },
+  { type: 'vat-summary', name: 'VAT Summary', description: 'Output tax by day', tag: 'TAX SUMMARY', icon: '₱' },
+  { type: 'sales', name: 'Sales Report', description: 'By day, cashier, terminal, payment or product', tag: 'OPERATIONS', icon: '▤' },
+  { type: 'inventory', name: 'Inventory', description: 'Stock on hand and stock movements', tag: 'INVENTORY', icon: '◫' },
+  { type: 'waste', name: 'Waste Report', description: 'Write-offs by reason and item', tag: 'LOSS PREVENTION', icon: '⌁' },
+  { type: 'purchasing', name: 'Purchasing', description: 'Purchase orders and deliveries', tag: 'SUPPLY', icon: '⇄' },
+  { type: 'requests', name: 'Customer Requests', description: 'What customers ask for', tag: 'DEMAND', icon: '♙' },
 ]
+
+const fmt = (value: ReportCell, kind: ReportKind): string => {
+  if (value === null || value === undefined || value === '') return ''
+  if (typeof value === 'string') return value
+  if (kind === 'money') return peso(value)
+  if (kind === 'pct') return `${value.toFixed(1)}%`
+  if (kind === 'int') return value.toLocaleString('en-PH')
+  return String(value)
+}
+
+const stamp = (iso: string) => new Date(iso).toLocaleString('en-PH', { dateStyle: 'medium', timeStyle: 'short' })
+
+type Open = { type: ReportType; params: ReportParams }
 
 export function ReportsPanel() {
   const { state } = useStore()
-  const [range, setRange] = useState<Range>('Today')
-  const [open, setOpen] = useState<ReportName | null>(null)
-  const now = new Date()
-  const inRange = (date: string) => { const d = daysBetween(date, now); return range === 'Today' ? d === 0 : range === 'Yesterday' ? d === 1 : d >= 0 && d < 7 }
-  const txns = state.transactions.filter((t) => inRange(t.date))
-  const valid = txns.filter((t) => t.status !== 'Voided')
-  const s = state.settings
-  const sum = (list: Transaction[], f: (t: Transaction) => number) => list.reduce((acc, t) => acc + f(t), 0)
-  const refunds = valid.reduce((acc, t) => acc + t.refunds.reduce((x, r) => x + r.amount, 0), 0)
-  const productName = (id: string) => state.products.find((p) => p.id === id)?.name ?? id
+  const live = state.source === 'live'
+  const [from, setFrom] = useState(daysAgo(6))
+  const [to, setTo] = useState(ymd(new Date()))
+  const [productId, setProductId] = useState('')
+  const [cashierId, setCashierId] = useState('')
+  const [terminalId, setTerminalId] = useState('')
+  const [open, setOpen] = useState<Open | null>(null)
+  const [pickShift, setPickShift] = useState(false)
+  const rangeOk = from <= to
+  const terminals = useServerData(live, getAdminTerminals, [])
+  const grand = useServerData(live, getGrandTotal, [open === null, state.liveSyncedAt])
+  const preset = (days: number, endDaysAgo = 0) => { setFrom(daysAgo(days - 1 + endDaysAgo)); setTo(daysAgo(endDaysAgo)) }
+  const params: ReportParams = { from, to, product_id: productId || undefined, cashier_id: cashierId || undefined, terminal_id: terminalId || undefined }
 
-  function build(name: ReportName): ReportData {
-    const gross = sum(valid, (t) => t.gross)
-    const reading = (): ReportData => ({
-      summary: [['Beginning OR', txns[0]?.number ?? '—'], ['Ending OR', txns[txns.length - 1]?.number ?? '—'], ['Transactions', num(valid.length)], ['Gross sales', peso(gross)], ['Less VAT (SC/PWD)', peso(sum(valid, (t) => t.lessVat))], ['SC/PWD discounts', peso(sum(valid, (t) => t.discount))], ['Refunds', peso(refunds)], ['Voids', `${txns.length - valid.length} · ${peso(sum(txns.filter((t) => t.status === 'Voided'), (t) => t.total))}`], ['Net sales', peso(sum(valid, netTotal))], ['VATable sales', peso(sum(valid.filter((t) => t.customerType === 'Regular'), (t) => t.total - t.vat))], ['VAT amount', peso(sum(valid, (t) => t.vat))], ['VAT-exempt sales', peso(sum(valid, (t) => t.vatExempt))], ...(name === 'Z-Reading' ? [['Accumulated grand total', peso(sum(state.transactions.filter((t) => t.status !== 'Voided'), netTotal))] as [string, string]] : [])],
-      headers: ['Payment method', 'Transactions', 'Amount'],
-      rows: (['Cash', 'GCash', 'Card', 'Maya'] as const).map((m) => [m, valid.filter((t) => t.payment.method === m).length, sum(valid.filter((t) => t.payment.method === m), netTotal).toFixed(2)]),
-    })
-    switch (name) {
-      case 'X-Reading':
-      case 'Z-Reading': return reading()
-      case 'e-Journal': return { summary: [['Receipts', num(txns.length)], ['Net', peso(sum(valid, netTotal))]], headers: ['Receipt', 'Date', 'Time', 'Customer', 'Method', 'Gross', 'Discount', 'VAT', 'Total', 'Status'], rows: txns.map((t) => [t.number, shortDate(t.date), time(t.date), t.customerType, t.payment.method, t.gross.toFixed(2), (t.discount + t.lessVat).toFixed(2), t.vat.toFixed(2), t.total.toFixed(2), t.status]) }
-      case 'VAT Summary': {
-        const days = [...new Set(valid.map((t) => dateKey(t.date)))].sort()
-        return { summary: [['VATable sales', peso(sum(valid.filter((t) => t.customerType === 'Regular'), (t) => t.total - t.vat))], ['Output VAT', peso(sum(valid, (t) => t.vat))], ['VAT-exempt sales', peso(sum(valid, (t) => t.vatExempt))], ['VAT rate', `${Math.round(s.vatRate * 100)}%`]],
-          headers: ['Date', 'VATable sales', 'VAT', 'VAT-exempt', 'SC/PWD discount'],
-          rows: days.map((d) => { const list = valid.filter((t) => dateKey(t.date) === d); return [d, sum(list.filter((t) => t.customerType === 'Regular'), (t) => t.total - t.vat).toFixed(2), sum(list, (t) => t.vat).toFixed(2), sum(list, (t) => t.vatExempt).toFixed(2), sum(list, (t) => t.discount).toFixed(2)] }) }
-      }
-      case 'Sales by Item': {
-        const items = new Map<string, { qty: number; revenue: number }>()
-        valid.forEach((t) => t.lines.forEach((l) => { const x = items.get(l.productId) ?? { qty: 0, revenue: 0 }; x.qty += l.qty; x.revenue += l.qty * l.price * (t.total / (t.gross || 1)); items.set(l.productId, x) }))
-        const rows = [...items].sort((a, b) => b[1].revenue - a[1].revenue).map(([id, x]) => { const cost = (state.products.find((p) => p.id === id)?.cost ?? 0) * x.qty; const exVat = x.revenue / (1 + s.vatRate); return [productName(id), x.qty, x.revenue.toFixed(2), cost.toFixed(2), `${exVat ? (((exVat - cost) / exVat) * 100).toFixed(1) : '0.0'}%`] })
-        return { summary: [['Items sold', num([...items.values()].reduce((a, x) => a + x.qty, 0))], ['Distinct products', num(items.size)]], headers: ['Product', 'Units', 'Revenue', 'Cost', 'Margin (ex-VAT)'], rows }
-      }
-      case 'Inventory Valuation': {
-        const cats = [...new Set(state.products.map((p) => p.category))]
-        const rows = cats.map((c) => { const ps = state.products.filter((p) => p.category === c); return [c, ps.length, ps.reduce((a, p) => a + p.stock, 0), ps.reduce((a, p) => a + p.stock * p.cost, 0).toFixed(2), ps.reduce((a, p) => a + p.stock * p.price, 0).toFixed(2)] })
-        return { summary: [['Value at cost', peso(state.products.reduce((a, p) => a + p.stock * p.cost, 0))], ['Value at retail', peso(state.products.reduce((a, p) => a + p.stock * p.price, 0))], ['As of', `${shortDate(now)} ${time(now)}`]], headers: ['Category', 'Products', 'Units', 'At cost', 'At retail'], rows }
-      }
-      case 'Waste Report': {
-        const entries = state.waste.filter((w) => inRange(w.date))
-        return { summary: [['Entries', num(entries.length)], ['Total at cost', peso(entries.reduce((a, w) => a + w.value, 0))]], headers: ['Date', 'Product', 'Qty', 'Reason', 'Value', 'Notes'], rows: entries.map((w) => [shortDate(w.date), productName(w.productId), w.qty, w.reason, w.value.toFixed(2), w.notes]) }
-      }
-      case 'Cashier Performance': {
-        const rows = state.employees.map((e) => { const list = valid.filter((t) => t.cashierId === e.id); const net = sum(list, netTotal); return [e.name, list.length, net.toFixed(2), list.length ? (net / list.length).toFixed(2) : '0.00', sum(list, (t) => t.refunds.length)] }).filter((r) => Number(r[1]) > 0)
-        return { summary: [['Cashiers active', num(rows.length)]], headers: ['Cashier', 'Receipts', 'Net sales', 'Avg basket', 'Refunds'], rows }
-      }
-    }
+  const start = (type: ReportType) => {
+    if (!rangeOk) return
+    if (type === 'x-reading') { setPickShift(true); return }
+    if (type === 'z-reading') { setOpen({ type, params: { date: to } }); return }
+    setOpen({ type, params: { ...params, group: type === 'sales' ? 'day' : undefined } })
   }
 
-  const data = open ? build(open) : null
-  const rangeLabel = range === '7 days' ? `${shortDate(new Date(now.getTime() - 6 * 86_400_000))} – ${shortDate(now)}` : shortDate(range === 'Today' ? now : new Date(now.getTime() - 86_400_000))
-
+  if (!live) return <div className="module-panel reports-panel"><Empty>Reports are made from the store server's data. Connect to the server (Settings → Server) to use them.</Empty></div>
+  const g = grand.data
   return <div className="module-panel reports-panel">
-    <div className="module-intro"><div><span className="eyebrow">REPORT CENTER</span><h2>Reports &amp; compliance</h2><p>Operational summaries and BIR-aligned records for {s.storeName}. {rangeLabel}.</p></div><Segmented label="Date range" options={['Today', 'Yesterday', '7 days'] as const} value={range} onChange={setRange} /></div>
-    <div className="report-grid">{catalog.map(([name, description, tag, icon]) => <button className="report-card" key={name} onClick={() => setOpen(name)}><span className="report-icon">{icon}</span><span className="report-tag">{tag}</span><b>{name}</b><small>{description}</small><i>OPEN REPORT ↗</i></button>)}</div>
-    {open && data && <Modal wide title={open} eyebrow={`${s.businessName.toUpperCase()} · ${rangeLabel.toUpperCase()}`} onClose={() => setOpen(null)} footer={<><button className="outline-button" onClick={() => downloadCsv(`${open.toLowerCase().replace(/\s+/g, '-')}-${dateKey(now)}.csv`, data.headers, data.rows)}>↓ CSV</button><button className="primary-button" onClick={() => window.print()}>PRINT ⎙</button></>}>
-      <div className="print-area report-print">
-        <div className="report-summary">{data.summary.map(([label, value]) => <div key={label}><span>{label}</span><b>{value}</b></div>)}</div>
-        <div className="data-table-wrap"><table className="data-table"><thead><tr>{data.headers.map((h) => <th key={h}>{h.toUpperCase()}</th>)}</tr></thead><tbody>{data.rows.map((row, i) => <tr key={i}>{row.map((cell, j) => <td key={j}>{j === 0 ? <b>{cell}</b> : cell}</td>)}</tr>)}</tbody></table>{data.rows.length === 0 && <p className="muted-text">No records in this range.</p>}</div>
-        <p className="muted-text">TIN {s.tin} · MIN {s.machineSerial} · Generated {shortDate(now)} {time(now)}</p>
-      </div>
-    </Modal>}
+    <div className="module-intro"><div><span className="eyebrow">REPORT CENTER</span><h2>Reports &amp; compliance</h2><p>BIR-style readings and operating reports for {state.settings.businessName || 'the store'}. Pick a date range and filters, then open a report. Each one can be printed or saved as PDF or CSV.</p></div></div>
+    <div className="reports-grandtotal" aria-label="Accumulated grand total">
+      <div><span>ACCUMULATED GRAND TOTAL</span><b>{g ? peso(g.accumulated_total) : '—'}</b><small>sales only ever add to this; voids never take from it</small></div>
+      <div><span>VOIDS TO DATE</span><b>{g ? peso(g.accumulated_voids) : '—'}</b></div>
+      <div><span>REFUNDS TO DATE</span><b>{g ? peso(g.accumulated_refunds) : '—'}</b></div>
+      <div><span>LAST Z-READING</span><b>{g?.last_z_no ? `No. ${String(g.last_z_no).padStart(6, '0')}` : 'none yet'}</b><small>{g?.last_z_date ?? 'close a day to create one'}</small></div>
+    </div>
+    <div className="filter-bar">
+      <label className="filter-field"><span>FROM</span><input type="date" aria-label="From date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} /></label>
+      <label className="filter-field"><span>TO</span><input type="date" aria-label="To date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} /></label>
+      <div className="filter-presets"><button className="outline-button" onClick={() => preset(1)}>TODAY</button><button className="outline-button" onClick={() => preset(1, 1)}>YESTERDAY</button><button className="outline-button" onClick={() => preset(7)}>7 DAYS</button><button className="outline-button" onClick={() => preset(30)}>30 DAYS</button></div>
+      <label className="filter-field"><span>PRODUCT</span><select aria-label="Filter by product" value={productId} onChange={(e) => setProductId(e.target.value)}><option value="">All products</option>{state.products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+      <label className="filter-field"><span>EMPLOYEE</span><select aria-label="Filter by employee" value={cashierId} onChange={(e) => setCashierId(e.target.value)}><option value="">All employees</option>{state.employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
+      <label className="filter-field"><span>TERMINAL</span><select aria-label="Filter by terminal" value={terminalId} onChange={(e) => setTerminalId(e.target.value)}><option value="">All terminals</option>{(terminals.data ?? []).map((t) => <option key={t.terminal_id} value={t.terminal_id}>{t.terminal_id}{t.terminal_name ? ` · ${t.terminal_name}` : ''}</option>)}</select></label>
+    </div>
+    {!rangeOk && <p className="form-error">The start date is after the end date.</p>}
+    <p className="muted-text reports-note">Filters apply to the Sales, e-Journal, VAT, Inventory, Waste, Purchasing and Requests reports. X- and Z-Readings are always complete: one shift, or one whole day.</p>
+    <div className="report-grid">{catalog.map((c) => <button className="report-card" key={c.type} disabled={!rangeOk} onClick={() => start(c.type)}><span className="report-icon">{c.icon}</span><span className="report-tag">{c.tag}</span><b>{c.name}</b><small>{c.description}</small><i>OPEN ›</i></button>)}</div>
+    {pickShift && <ShiftPicker from={from} to={to} onClose={() => setPickShift(false)} onPick={(s) => { setPickShift(false); setOpen({ type: 'x-reading', params: { session_id: `s${s.session_id}` } }) }} />}
+    {open && <ReportViewer key={`${open.type}-${JSON.stringify(open.params)}`} open={open} onClose={() => setOpen(null)} onChange={setOpen} />}
   </div>
+}
+
+function ShiftPicker({ from, to, onClose, onPick }: { from: string; to: string; onClose: () => void; onPick: (shift: ReportShift) => void }) {
+  const shifts = useServerData(true, () => getReportShifts(from, to), [from, to])
+  return <Modal wide title="X-Reading · choose a shift" eyebrow={`${from} TO ${to}`} onClose={onClose}>
+    {shifts.error && <p className="form-error">{shifts.error}</p>}
+    {shifts.loading && !shifts.data && <p className="muted-text">Loading shifts…</p>}
+    {shifts.data && shifts.data.length === 0 && <Empty>No cashier shifts in this date range.</Empty>}
+    {shifts.data && shifts.data.length > 0 && <div className="data-table-wrap"><table className="data-table"><thead><tr>{['CASHIER', 'TERMINAL', 'STARTED', 'ENDED', 'RECEIPTS', ''].map((h) => <th key={h}>{h}</th>)}</tr></thead>
+      <tbody>{shifts.data.map((s) => <tr key={s.session_id} className="clickable-row" onClick={() => onPick(s)}>
+        <td><b>{s.cashier}</b></td><td>{s.terminal_id}</td><td>{stamp(s.start)}</td><td>{s.end ? stamp(s.end) : <span className="status-pill open">ON SHIFT</span>}</td><td>{s.receipts}</td>
+        <td><button className="outline-button" onClick={(e) => { e.stopPropagation(); onPick(s) }}>{s.has_reading ? 'OPEN SAVED ›' : 'OPEN ›'}</button></td></tr>)}</tbody></table></div>}
+  </Modal>
+}
+
+const groups = [['day', 'By day'], ['cashier', 'By cashier'], ['terminal', 'By terminal'], ['payment', 'By payment'], ['product', 'By product']] as const
+
+function ReportViewer({ open, onClose, onChange }: { open: Open; onClose: () => void; onChange: (open: Open) => void }) {
+  const { actions } = useStore()
+  const [version, setVersion] = useState(0)
+  const doc = useServerData<ReportDoc>(true, () => (open.type === 'x-reading' ? getXReading(Number(String(open.params.session_id).replace(/^s/, ''))) : getReport(open.type, open.params)), [version])
+  const [busy, setBusy] = useState<'pdf' | 'csv' | 'save' | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const [confirmClose, setConfirmClose] = useState(false)
+  // After saving by hand, the saved copy replaces the live view.
+  const [saved, setSaved] = useState<ReportDoc | null>(null)
+  const d = saved ?? doc.data
+  const reading = d?.reading
+  const title = catalog.find((c) => c.type === open.type)?.name ?? open.type
+
+  async function download(format: 'pdf' | 'csv') {
+    setBusy(format); setError(null)
+    try { await downloadReport(open.type, open.params, format) } catch (e) { setError(apiErrorMessage(e)) } finally { setBusy(null) }
+  }
+  async function saveX() {
+    setBusy('save'); setError(null)
+    try { setSaved(await postXReading(Number(String(open.params.session_id).replace(/^s/, '')))); actions.toast('X-Reading saved') } catch (e) { setError(apiErrorMessage(e)) } finally { setBusy(null) }
+  }
+  async function closeDay() {
+    setBusy('save'); setError(null)
+    try { const z = await postZReading(open.params.date!); setConfirmClose(false); setVersion((v) => v + 1); actions.toast(z.already_closed ? 'That day was already closed' : `Z-Reading No. ${String(z.reading?.reading_no ?? 0).padStart(6, '0')} saved`) } catch (e) { setError(apiErrorMessage(e)); setConfirmClose(false) } finally { setBusy(null) }
+  }
+
+  const footer = <>
+    {error && <span className="confirm-text error" role="alert">{error}</span>}
+    {open.type === 'z-reading' && reading && !reading.stored && (confirmClose
+      ? <><span className="confirm-text">Save the Z-Reading for {open.params.date}? It closes the day and can't be changed.</span><button className="outline-button" disabled={busy !== null} onClick={() => setConfirmClose(false)}>CANCEL</button><button className="primary-button" disabled={busy !== null} onClick={() => void closeDay()}>YES, CLOSE THE DAY</button></>
+      : <button className="outline-button" disabled={busy !== null} onClick={() => setConfirmClose(true)}>CLOSE THE DAY…</button>)}
+    {open.type === 'x-reading' && reading && !reading.stored && <button className="outline-button" disabled={busy !== null} onClick={() => void saveX()}>SAVE THIS X-READING</button>}
+    <button className="outline-button" disabled={busy !== null || !d} onClick={() => void download('csv')}>{busy === 'csv' ? 'PREPARING…' : '↓ CSV'}</button>
+    <button className="outline-button" disabled={busy !== null || !d} onClick={() => void download('pdf')}>{busy === 'pdf' ? 'PREPARING…' : '↓ PDF'}</button>
+    <button className="primary-button" disabled={!d} onClick={() => window.print()}>PRINT ⎙</button>
+  </>
+
+  return <Modal wide title={`${title}${reading?.reading_no ? ` No. ${String(reading.reading_no).padStart(6, '0')}` : ''}`} eyebrow={(d?.business.name || 'REPORT').toUpperCase()} onClose={onClose} footer={footer}>
+    <div className="report-controls">
+      {open.type === 'sales' && <Segmented label="Group sales" options={groups.map((x) => x[1])} value={groups.find((x) => x[0] === open.params.group)?.[1] ?? 'By day'} onChange={(label) => onChange({ ...open, params: { ...open.params, group: groups.find((x) => x[1] === label)![0] } })} />}
+      {open.type === 'z-reading' && <label className="filter-field"><span>DAY</span><input type="date" aria-label="Z-Reading day" value={open.params.date} max={ymd(new Date())} onChange={(e) => e.target.value && onChange({ ...open, params: { date: e.target.value } })} /></label>}
+      {reading && <span className={`status-pill ${reading.stored ? 'completed' : 'open'}`}>{reading.stored ? (reading.source === 'end_of_shift' ? 'SAVED WHEN SHIFT ENDED' : 'SAVED') : open.type === 'z-reading' ? 'PREVIEW · DAY NOT CLOSED' : 'LIVE · NOT SAVED'}</span>}
+    </div>
+    {error && <p className="form-error">{error}</p>}
+    {doc.error && <p className="form-error">{doc.error}</p>}
+    {doc.loading && !d && <p className="muted-text">Building the report…</p>}
+    {d && <div className="print-area report-print">
+      <header className="report-letterhead"><b>{d.business.name || '9010 Grocery Store'}</b>{d.business.tin && <span>TIN {d.business.tin}</span>}{d.business.address && <span>{d.business.address}</span>}<h3>{d.title}{reading?.reading_no ? ` No. ${String(reading.reading_no).padStart(6, '0')}` : ''}</h3><span>Period: {d.period}</span>{d.filters.map((f) => <span key={f}>{f}</span>)}</header>
+      {d.summary.length > 0 && <div className="report-summary">{d.summary.map((s) => <div key={s.label}><span>{s.label}</span><b>{fmt(s.value, s.kind) || '—'}</b></div>)}</div>}
+      {d.tables.map((t, i) => <section className="report-table" key={i}>
+        {t.title && <h4>{t.title}</h4>}
+        <div className="data-table-wrap"><table className="data-table"><thead><tr>{t.columns.map((c) => <th key={c.label} className={c.kind === 'text' ? '' : 'num'}>{c.label.toUpperCase()}</th>)}</tr></thead>
+          <tbody>{t.rows.map((row, r) => <tr key={r} className={String(row[0]).toUpperCase() === 'NET SALES' ? 'row-strong' : ''}>{row.map((cell, c) => <td key={c} className={t.columns[c]!.kind === 'text' ? '' : 'num'}>{c === 0 ? <b>{fmt(cell, t.columns[c]!.kind)}</b> : fmt(cell, t.columns[c]!.kind)}</td>)}</tr>)}
+            {t.rows.length === 0 && <tr><td colSpan={t.columns.length} className="muted-text">No records for this period.</td></tr>}
+            {t.totals && <tr className="row-strong totals">{t.totals.map((cell, c) => <td key={c} className={t.columns[c]!.kind === 'text' ? '' : 'num'}>{fmt(cell, t.columns[c]!.kind)}</td>)}</tr>}</tbody></table></div>
+      </section>)}
+      <p className="muted-text">Generated by {d.generated_by} · {stamp(d.generated_at)}</p>
+    </div>}
+  </Modal>
 }

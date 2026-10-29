@@ -65,7 +65,7 @@ export const editorWorkspaces: Record<Editor, WorkspaceName[]> = {
   'AI Insights': ['AI Insights'],
   'Sales History': ['AI Insights'],
   'Trend Analysis': ['AI Insights'],
-  'Basket Analysis': ['Reports'],
+  'Basket Analysis': ['AI Insights'],
   'Customer Requests': ['Requests'],
   Employees: ['Admin Station'],
   Reports: ['Reports'],

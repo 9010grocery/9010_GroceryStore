@@ -3,6 +3,7 @@ import { getPool, withTransaction } from '../config/db.js'
 import { HttpError } from '../utils/httpError.js'
 import { logAudit } from './audit.service.js'
 import { signTerminalToken, type RoleName } from './auth.service.js'
+import { storeXReading } from './reports.service.js'
 
 /**
  * Not a real cashier PC: owner sales on the server PC and imported history are recorded on it
@@ -285,6 +286,8 @@ async function endOne(connection: PoolConnection, actorId: number, session: Sess
     via === 'cashier' ? 'cashier_logout' : 'owner_ended',
     session.session_id,
   ])
+  // When the owner ends a shift, the X-Reading of that shift is saved with it.
+  if (via !== 'cashier') await storeXReading(connection, session.session_id, actorId, 'end_of_shift')
   await logAudit(
     {
       user_id: actorId,
