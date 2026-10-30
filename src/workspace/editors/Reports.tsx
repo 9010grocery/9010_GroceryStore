@@ -2,11 +2,15 @@ import { useState } from 'react'
 import { useServerData } from '../../hooks/useServerData'
 import { peso } from '../../lib/format'
 import {
-  apiErrorMessage, downloadReport, getAdminTerminals, getGrandTotal, getReport, getReportShifts, getXReading, postXReading, postZReading,
+  apiErrorMessage, getAdminTerminals, getGrandTotal, getReport, getReportShifts, getXReading, postXReading, postZReading,
   type ReportCell, type ReportDoc, type ReportKind, type ReportParams, type ReportShift,
 } from '../../services/api'
 import { useStore } from '../../store/StoreContext'
 import { Empty, Modal, Segmented } from '../ui'
+import { DatePicker, DateRangePicker } from '../DatePicker'
+import { ExportMenu } from '../ExportMenu'
+import { Select } from '../Select'
+import type { ExportCell, ExportTable } from '../../lib/export'
 
 // Report Center (spec Module 10): every number comes from the store's database through /api/reports, and the PDF and CSV
 // files are made by the server from the same report, so the screen, the printout and the files always agree.
@@ -75,12 +79,11 @@ export function ReportsPanel() {
       <div><span>LAST Z-READING</span><b>{g?.last_z_no ? `No. ${String(g.last_z_no).padStart(6, '0')}` : 'none yet'}</b><small>{g?.last_z_date ?? 'close a day to create one'}</small></div>
     </div>
     <div className="filter-bar">
-      <label className="filter-field"><span>FROM</span><input type="date" aria-label="From date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} /></label>
-      <label className="filter-field"><span>TO</span><input type="date" aria-label="To date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} /></label>
+      <label className="filter-field range-field"><span>DATE RANGE</span><DateRangePicker ariaLabel="Date range" from={from} to={to} max={ymd(new Date())} onChange={(a, b) => { setFrom(a); setTo(b) }} /></label>
       <div className="filter-presets"><button className="outline-button" onClick={() => preset(1)}>TODAY</button><button className="outline-button" onClick={() => preset(1, 1)}>YESTERDAY</button><button className="outline-button" onClick={() => preset(7)}>7 DAYS</button><button className="outline-button" onClick={() => preset(30)}>30 DAYS</button></div>
-      <label className="filter-field"><span>PRODUCT</span><select aria-label="Filter by product" value={productId} onChange={(e) => setProductId(e.target.value)}><option value="">All products</option>{state.products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-      <label className="filter-field"><span>EMPLOYEE</span><select aria-label="Filter by employee" value={cashierId} onChange={(e) => setCashierId(e.target.value)}><option value="">All employees</option>{state.employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</select></label>
-      <label className="filter-field"><span>TERMINAL</span><select aria-label="Filter by terminal" value={terminalId} onChange={(e) => setTerminalId(e.target.value)}><option value="">All terminals</option>{(terminals.data ?? []).map((t) => <option key={t.terminal_id} value={t.terminal_id}>{t.terminal_id}{t.terminal_name ? ` · ${t.terminal_name}` : ''}</option>)}</select></label>
+      <label className="filter-field"><span>PRODUCT</span><Select aria-label="Filter by product" value={productId} onChange={(e) => setProductId(e.target.value)}><option value="">All products</option>{state.products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></label>
+      <label className="filter-field"><span>EMPLOYEE</span><Select aria-label="Filter by employee" value={cashierId} onChange={(e) => setCashierId(e.target.value)}><option value="">All employees</option>{state.employees.map((e) => <option key={e.id} value={e.id}>{e.name}</option>)}</Select></label>
+      <label className="filter-field"><span>TERMINAL</span><Select aria-label="Filter by terminal" value={terminalId} onChange={(e) => setTerminalId(e.target.value)}><option value="">All terminals</option>{(terminals.data ?? []).map((t) => <option key={t.terminal_id} value={t.terminal_id}>{t.terminal_id}{t.terminal_name ? ` · ${t.terminal_name}` : ''}</option>)}</Select></label>
     </div>
     {!rangeOk && <p className="form-error">The start date is after the end date.</p>}
     <p className="muted-text reports-note">Filters apply to the Sales, e-Journal, VAT, Inventory, Waste, Purchasing and Requests reports. X- and Z-Readings are always complete: one shift, or one whole day.</p>
@@ -105,11 +108,26 @@ function ShiftPicker({ from, to, onClose, onPick }: { from: string; to: string; 
 
 const groups = [['day', 'By day'], ['cashier', 'By cashier'], ['terminal', 'By terminal'], ['payment', 'By payment'], ['product', 'By product']] as const
 
+/** Flattens a report into one table for the CSV / Excel / PDF export menu: the summary first, then every table with its section name in the first column. */
+function toExportTable(d: ReportDoc, title: string): ExportTable {
+  const text = (cell: ReportCell, kind: ReportKind): ExportCell => (typeof cell === 'number' && kind === 'text' ? cell : fmt(cell, kind))
+  const widest = d.tables.reduce<ReportDoc['tables'][number] | null>((best, t) => (!best || t.columns.length > best.columns.length ? t : best), null)
+  const width = widest?.columns.length ?? 2
+  const pad = (cells: ExportCell[]): ExportCell[] => [...cells, ...Array(Math.max(0, width - cells.length)).fill('')]
+  const rows: ExportCell[][] = d.summary.map((s) => ['Summary', ...pad([s.label, fmt(s.value, s.kind)]).slice(0, width)])
+  d.tables.forEach((t) => {
+    if (t.columns !== widest?.columns) rows.push(['', ...pad(t.columns.map((c) => c.label.toUpperCase()))])
+    t.rows.forEach((row) => rows.push([t.title ?? '', ...pad(row.map((cell, c) => text(cell, t.columns[c]!.kind)))]))
+    if (t.totals) rows.push([t.title ?? '', ...pad(t.totals.map((cell, c) => text(cell, t.columns[c]!.kind)))])
+  })
+  return { filename: `${d.type}-${ymd(new Date())}`, title, subtitle: `${d.business.name || '9010 Grocery Store'} · ${d.period}`, headers: ['Section', ...(widest?.columns.map((c) => c.label) ?? ['Item', 'Value'])], rows }
+}
+
 function ReportViewer({ open, onClose, onChange }: { open: Open; onClose: () => void; onChange: (open: Open) => void }) {
   const { actions } = useStore()
   const [version, setVersion] = useState(0)
   const doc = useServerData<ReportDoc>(true, () => (open.type === 'x-reading' ? getXReading(Number(String(open.params.session_id).replace(/^s/, ''))) : getReport(open.type, open.params)), [version])
-  const [busy, setBusy] = useState<'pdf' | 'csv' | 'save' | null>(null)
+  const [busy, setBusy] = useState<'save' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [confirmClose, setConfirmClose] = useState(false)
   // After saving by hand, the saved copy replaces the live view.
@@ -118,10 +136,6 @@ function ReportViewer({ open, onClose, onChange }: { open: Open; onClose: () => 
   const reading = d?.reading
   const title = catalog.find((c) => c.type === open.type)?.name ?? open.type
 
-  async function download(format: 'pdf' | 'csv') {
-    setBusy(format); setError(null)
-    try { await downloadReport(open.type, open.params, format) } catch (e) { setError(apiErrorMessage(e)) } finally { setBusy(null) }
-  }
   async function saveX() {
     setBusy('save'); setError(null)
     try { setSaved(await postXReading(Number(String(open.params.session_id).replace(/^s/, '')))); actions.toast('X-Reading saved') } catch (e) { setError(apiErrorMessage(e)) } finally { setBusy(null) }
@@ -137,15 +151,14 @@ function ReportViewer({ open, onClose, onChange }: { open: Open; onClose: () => 
       ? <><span className="confirm-text">Save the Z-Reading for {open.params.date}? It closes the day and can't be changed.</span><button className="outline-button" disabled={busy !== null} onClick={() => setConfirmClose(false)}>CANCEL</button><button className="primary-button" disabled={busy !== null} onClick={() => void closeDay()}>YES, CLOSE THE DAY</button></>
       : <button className="outline-button" disabled={busy !== null} onClick={() => setConfirmClose(true)}>CLOSE THE DAY…</button>)}
     {open.type === 'x-reading' && reading && !reading.stored && <button className="outline-button" disabled={busy !== null} onClick={() => void saveX()}>SAVE THIS X-READING</button>}
-    <button className="outline-button" disabled={busy !== null || !d} onClick={() => void download('csv')}>{busy === 'csv' ? 'PREPARING…' : '↓ CSV'}</button>
-    <button className="outline-button" disabled={busy !== null || !d} onClick={() => void download('pdf')}>{busy === 'pdf' ? 'PREPARING…' : '↓ PDF'}</button>
+    <ExportMenu disabled={busy !== null || !d} build={() => toExportTable(d!, title)} />
     <button className="primary-button" disabled={!d} onClick={() => window.print()}>PRINT ⎙</button>
   </>
 
   return <Modal wide title={`${title}${reading?.reading_no ? ` No. ${String(reading.reading_no).padStart(6, '0')}` : ''}`} eyebrow={(d?.business.name || 'REPORT').toUpperCase()} onClose={onClose} footer={footer}>
     <div className="report-controls">
       {open.type === 'sales' && <Segmented label="Group sales" options={groups.map((x) => x[1])} value={groups.find((x) => x[0] === open.params.group)?.[1] ?? 'By day'} onChange={(label) => onChange({ ...open, params: { ...open.params, group: groups.find((x) => x[1] === label)![0] } })} />}
-      {open.type === 'z-reading' && <label className="filter-field"><span>DAY</span><input type="date" aria-label="Z-Reading day" value={open.params.date} max={ymd(new Date())} onChange={(e) => e.target.value && onChange({ ...open, params: { date: e.target.value } })} /></label>}
+      {open.type === 'z-reading' && <label className="filter-field"><span>DAY</span><DatePicker ariaLabel="Z-Reading day" value={open.params.date ?? ""} max={ymd(new Date())} onChange={(value) => value && onChange({ ...open, params: { date: value } })} /></label>}
       {reading && <span className={`status-pill ${reading.stored ? 'completed' : 'open'}`}>{reading.stored ? (reading.source === 'end_of_shift' ? 'SAVED WHEN SHIFT ENDED' : 'SAVED') : open.type === 'z-reading' ? 'PREVIEW · DAY NOT CLOSED' : 'LIVE · NOT SAVED'}</span>}
     </div>
     {error && <p className="form-error">{error}</p>}

@@ -1,12 +1,14 @@
 import { useState } from 'react'
 import type { PaymentMethod, Transaction } from '../../data/types'
 import { netTotal } from '../../lib/ai'
-import { daysBetween, downloadCsv, peso, relativeDay, shortDate, time } from '../../lib/format'
+import { daysBetween, peso, relativeDay, shortDate, time } from '../../lib/format'
 import { OwnerPinModal } from '../../components/OwnerPinModal'
 import { apiErrorMessage } from '../../services/api'
 import { useStore } from '../../store/StoreContext'
-import { Empty, Field, Segmented, StatusPill } from '../ui'
+import { Empty, Field, Modal, SearchField, Segmented, StatusPill } from '../ui'
 import { Receipt } from './PointOfSale'
+import { Select } from '../Select'
+import { ExportMenu } from '../ExportMenu'
 
 const PAGE = 12
 
@@ -42,14 +44,18 @@ export function TransactionsPanel() {
     }
   }
 
-  return <div className={selected ? 'module-panel split-detail' : 'module-panel'}>
+  return <div className="module-panel">
     <div className="split-main">
-      <div className="module-intro"><div><span className="eyebrow">SALES JOURNAL</span><h2>Transactions</h2><p>{rows.length} receipts · {peso(net)} net sales</p></div>
-        <button className="outline-button" onClick={() => downloadCsv(`transactions-${range.replace(' ', '')}.csv`, ['Receipt', 'Date', 'Cashier', 'Customer', 'Items', 'Method', 'Total', 'Status'], rows.map((t) => [t.number, new Date(t.date).toLocaleString('en-PH'), cashierName(t.cashierId), t.customerType, t.lines.reduce((s, l) => s + l.qty, 0), t.payment.method, t.total.toFixed(2), t.status]))}>↓ EXPORT CSV</button></div>
+      <div className="module-intro"><div><span className="eyebrow">SALES JOURNAL</span><h2>Transactions</h2><p>{rows.length} receipt{rows.length === 1 ? '' : 's'} · {peso(net)} net sales</p></div></div>
       <div className="table-toolbar">
-        <label className="search-field compact"><span>⌕</span><input placeholder="Receipt # or item" value={query} onChange={(e) => { setQuery(e.target.value); setPage(0) }} /></label>
-        <div><Segmented label="Date range" options={['Today', '7 days'] as const} value={range} onChange={(v) => { setRange(v); setPage(0) }} />
-          <select className="select" value={method} onChange={(e) => { setMethod(e.target.value as PaymentMethod | 'All'); setPage(0) }} aria-label="Payment method">{['All', 'Cash', 'GCash', 'Card', 'Maya'].map((m) => <option key={m}>{m}</option>)}</select></div>
+        <div className="toolbar-filters">
+          <SearchField compact placeholder="Receipt # or item" value={query} onChange={(v) => { setQuery(v); setPage(0) }} />
+          <Segmented label="Date range" options={['Today', '7 days'] as const} value={range} onChange={(v) => { setRange(v); setPage(0) }} />
+          <Select className="select" value={method} onChange={(e) => { setMethod(e.target.value as PaymentMethod | 'All'); setPage(0) }} aria-label="Payment method">{['All', 'Cash', 'GCash', 'Card', 'Maya'].map((m) => <option key={m} value={m}>{m === 'All' ? 'All payments' : m}</option>)}</Select>
+        </div>
+        <div className="toolbar-actions">
+          <ExportMenu build={() => ({ filename: `transactions-${range.replace(' ', '')}`, title: `Transactions (${range})`, headers: ['Receipt', 'Date', 'Cashier', 'Customer', 'Items', 'Method', 'Total', 'Status'], rows: rows.map((t) => [t.number, new Date(t.date).toLocaleString('en-PH'), cashierName(t.cashierId), t.customerType, t.lines.reduce((s, l) => s + l.qty, 0), t.payment.method, t.total.toFixed(2), t.status]) })} />
+        </div>
       </div>
       <div className="data-table-wrap"><table className="data-table clickable"><thead><tr>{['RECEIPT', 'TIME', 'CASHIER', 'ITEMS', 'PAYMENT', 'TOTAL', 'STATUS'].map((h) => <th key={h}>{h}</th>)}</tr></thead>
         <tbody>{visible.map((t) => <tr key={t.id} className={selected?.id === t.id ? 'selected' : ''} onClick={() => actions.setUi({ selectedTxnId: t.id })}>
@@ -60,16 +66,15 @@ export function TransactionsPanel() {
       </div>
       <div className="table-foot"><span>SHOWING {visible.length} OF {rows.length}</span><Pager page={page} pages={pages} onPage={setPage} /></div>
     </div>
-    {selected && <aside className="detail-pane">
-      <div className="detail-head"><span className="eyebrow">RECEIPT DETAIL</span><button className="modal-close" aria-label="Close detail" onClick={() => actions.setUi({ selectedTxnId: null })}>✕</button></div>
+    {selected && <Modal title={`Receipt ${selected.number}`} eyebrow="RECEIPT DETAIL" onClose={() => actions.setUi({ selectedTxnId: null })} footer={<>
+      <button className="outline-button" disabled={reprinting} onClick={() => void reprint(selected)}>{reprinting ? 'PREPARING…' : 'REPRINT ⎙'}</button>
+      <button className="outline-button" disabled={selected.status === 'Voided' || selected.status === 'Refunded'} onClick={() => actions.navigate('Transactions', { returnTxnId: selected.id })}>RETURN / REFUND</button>
+      {canVoid(selected) && <button className="danger-button" onClick={() => setConfirmVoid(selected)}>VOID</button>}
+      <button className="primary-button" onClick={() => actions.setUi({ selectedTxnId: null })}>CLOSE</button>
+    </>}>
       <Receipt txn={selected} />
-      <div className="detail-actions">
-        <button className="outline-button" disabled={reprinting} onClick={() => void reprint(selected)}>{reprinting ? 'PREPARING…' : 'REPRINT ⎙'}</button>
-        <button className="outline-button" disabled={selected.status === 'Voided' || selected.status === 'Refunded'} onClick={() => actions.navigate('Transactions', { returnTxnId: selected.id })}>RETURN / REFUND</button>
-        {canVoid(selected) && <button className="danger-button" onClick={() => setConfirmVoid(selected)}>VOID</button>}
-      </div>
       {selected.refunds.length > 0 && <div className="refund-history"><span className="eyebrow">REFUNDS</span>{selected.refunds.map((r) => <div key={r.id}><b>{peso(r.amount)}</b><small>{relativeDay(r.date)} · {r.reason} · {r.restocked ? 'restocked' : 'written off'}</small></div>)}</div>}
-    </aside>}
+    </Modal>}
     {confirmVoid && <OwnerPinModal title={`Void ${confirmVoid.number}?`} purpose="void" requireReason confirmLabel="VOID SALE"
       description={`Cancels the whole sale of ${peso(confirmVoid.total)} and returns all items to stock. Voids are only allowed on the same business day and are recorded in the e-journal.`}
       onClose={() => setConfirmVoid(null)}
@@ -127,7 +132,7 @@ export function ReturnsPanel() {
 
   return <div className="module-panel">
     <div className="module-intro"><div><span className="eyebrow">AFTER-SALES</span><h2>Returns &amp; refunds</h2><p>Look up a receipt, choose the items being returned, and decide whether they go back on the shelf.</p></div></div>
-    <div className="lookup-row"><label className="search-field compact"><span>⌕</span><input placeholder="Receipt number, e.g. INV-2026-000123" value={lookup} onChange={(e) => setLookup(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') find() }} /></label><button className="primary-button" onClick={find}>FIND RECEIPT</button></div>
+    <div className="lookup-row"><SearchField compact placeholder="Receipt number, e.g. INV-2026-000123" value={lookup} onChange={setLookup} onKeyDown={(e) => { if (e.key === 'Enter') find() }} /><button className="primary-button" onClick={find}>FIND RECEIPT</button></div>
     {!txn && <Empty>Search a receipt, or pick one in the Transactions panel and press “Return / Refund”.</Empty>}
     {txn && <div className="return-form">
       <div className="return-head"><div><b>{txn.number}</b><small>{shortDate(txn.date)} {time(txn.date)} · {txn.payment.method} · {peso(txn.total)}</small></div><StatusPill value={txn.status} /></div>
@@ -143,7 +148,7 @@ export function ReturnsPanel() {
           })}
         </tbody></table>
         <div className="form-grid">
-          <Field label="REASON"><select value={reason} onChange={(e) => { const r = e.target.value as (typeof reasons)[number]; setReason(r); setRestock(r === 'Wrong item' || r === 'Changed mind' || r === 'Overcharged') }}>{reasons.map((r) => <option key={r}>{r}</option>)}</select></Field>
+          <Field label="REASON"><Select value={reason} onChange={(e) => { const r = e.target.value as (typeof reasons)[number]; setReason(r); setRestock(r === 'Wrong item' || r === 'Changed mind' || r === 'Overcharged') }}>{reasons.map((r) => <option key={r}>{r}</option>)}</Select></Field>
           <Field label="ITEM CONDITION"><label className="toggle"><input type="checkbox" checked={restock} onChange={(e) => setRestock(e.target.checked)} /><span>{restock ? 'Return to shelf (restock)' : 'Write off to waste log'}</span></label></Field>
         </div>
         <div className="form-actions"><span>{count} ITEM{count === 1 ? '' : 'S'} · REFUND VIA {txn.payment.method.toUpperCase()}</span><button className="primary-button" disabled={!count} onClick={() => setApproving(true)}>REFUND {peso(amount)}</button></div>

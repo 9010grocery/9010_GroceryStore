@@ -3,6 +3,7 @@ import { downloadCsv, num } from '../../lib/format'
 import { apiErrorMessage, postImport, type ImportKind, type ImportResult } from '../../services/api'
 import { useStore } from '../../store/StoreContext'
 import { Empty, Field, Segmented } from '../ui'
+import { Select } from '../Select'
 
 // Imports data exported from the old system. The file is read here (CSV, .xlsx, .xls), its columns are matched
 // to the fields below, and the rows go to the server, which checks and saves them (server/services/import.service.ts).
@@ -74,7 +75,7 @@ const KINDS: { kind: ImportKind; label: string; unit: string; summary: string; f
     ],
   },
   {
-    kind: 'waste', label: 'Waste', unit: 'entries',
+    kind: 'waste', label: 'Write-offs', unit: 'entries',
     summary: 'Past spoilage, damage and expiry write-offs. Exact duplicates are skipped. History only: does not change current stock.',
     fields: [
       { key: 'date', label: 'Date', required: true, type: 'date', names: ['date', 'waste date', 'date recorded'] },
@@ -317,7 +318,7 @@ export function DataImportPanel() {
           <input type="file" accept=".csv,.xlsx,.xls,.ods,.txt" onChange={(e) => void onFile(e)} disabled={busy !== null} />
           <span>{busy === 'reading' ? 'Reading…' : fileName ? `${fileName} · ${num(sheet?.rows.length ?? 0)} rows — choose another file` : 'Choose a .xlsx, .xls or .csv file'}</span>
         </label>
-        {sheets.length > 1 && <Field label="SHEET"><select value={sheet?.name} onChange={(e) => chooseSheet(e.target.value)}>{sheets.map((s) => <option key={s.name}>{s.name}</option>)}</select></Field>}
+        {sheets.length > 1 && <Field label="SHEET"><Select value={sheet?.name} onChange={(e) => chooseSheet(e.target.value)}>{sheets.map((s) => <option key={s.name}>{s.name}</option>)}</Select></Field>}
         {(sheet?.rows.length ?? 0) > MAX_ROWS && <p className="pin-error">Only the first {num(MAX_ROWS)} rows will be imported. Split the file and import the rest separately.</p>}
       </div>
     </section>
@@ -329,10 +330,10 @@ export function DataImportPanel() {
         <p className="muted-text">Matched automatically from the column names. Check each one; leave a field on “not in file” if the old system doesn't have it.</p>
         <div className="import-mapping">
           {def.fields.map((field) => <Field key={field.key} label={`${field.label.toUpperCase()}${field.required ? ' *' : ''}`} hint={field.hint}>
-            <select value={mapping[field.key] ?? -1} onChange={(e) => { resetResults(); setMapping((m) => { const next = { ...m }; if (Number(e.target.value) < 0) delete next[field.key]; else next[field.key] = Number(e.target.value); return next }) }}>
+            <Select value={mapping[field.key] ?? -1} onChange={(e) => { resetResults(); setMapping((m) => { const next = { ...m }; if (Number(e.target.value) < 0) delete next[field.key]; else next[field.key] = Number(e.target.value); return next }) }}>
               <option value={-1}>— not in file —</option>
               {sheet.headers.map((header, i) => <option key={i} value={i}>{header}</option>)}
-            </select>
+            </Select>
           </Field>)}
         </div>
         {def.fields.some((f) => f.type === 'date') && <label className="toggle-row import-toggle"><div><b>Dates are day first (DD/MM/YYYY)</b><small>Off: 08/14/2026 is August 14. Dates like 2026-08-14 work either way.</small></div><input type="checkbox" checked={dayFirst} onChange={(e) => { resetResults(); setDayFirst(e.target.checked) }} /></label>}

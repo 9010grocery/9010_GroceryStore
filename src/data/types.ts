@@ -9,7 +9,7 @@ export type WorkspaceName =
   | 'Purchasing'
   | 'AI Insights'
   | 'Reports'
-  | 'Waste'
+  | 'Write-offs'
   | 'Requests'
   | 'Settings'
 
@@ -202,6 +202,8 @@ export interface Settings {
   serviceLevel: number // e.g. 0.95
   coverDays: number // target days of stock after lead time
   expiryWarningDays: number
+  /** Testing only: shows a button in the POS that adds a random product as if it had been scanned. Off by default. */
+  simulateBarcodeScan: boolean
   notifications: Record<'lowStock' | 'expiry' | 'requests' | 'aiDigest' | 'shiftReminder', boolean>
   rolePermissions: Record<Role, WorkspaceName[]>
 }

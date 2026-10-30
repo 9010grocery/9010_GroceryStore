@@ -3,12 +3,13 @@ import { askAssistant, basketRules, trafficHeatmap, WEEKS, weekLabels, type Assi
 import { peso, pct } from '../../lib/format'
 import { useAnalytics, useStore } from '../../store/StoreContext'
 import { ComboChart, Empty, Heatmap, Legend, SERIES, Segmented, SectionHeading, Sparkline } from '../ui'
+import { Select } from '../Select'
 
 function ProductPicker() {
   const { state, actions } = useStore()
-  return <select className="select" aria-label="Product" value={state.ui.forecastProductId} onChange={(e) => actions.setUi({ forecastProductId: e.target.value })}>
+  return <Select className="select" aria-label="Product" value={state.ui.forecastProductId} onChange={(e) => actions.setUi({ forecastProductId: e.target.value })}>
     {[...state.products].filter((p) => p.active).sort((a, b) => a.name.localeCompare(b.name)).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-  </select>
+  </Select>
 }
 
 export function SalesHistoryPanel() {
@@ -86,7 +87,12 @@ export function BasketPanel() {
       {rules.map((r) => <tr key={`${r.a}${r.b}`}><td><b>{name(r.a)}</b></td><td>{name(r.b)}</td><td><div className="inline-bar"><span style={{ width: `${r.confidence * 100}%` }} /></div>{Math.round(r.confidence * 100)}%</td><td><b>{r.lift.toFixed(2)}×</b></td><td>{r.together}</td></tr>)}
     </tbody></table>{rules.length === 0 && <Empty>Not enough receipts yet.</Empty>}</div>
     <SectionHeading title="ABC CLASSIFICATION · LAST 28 DAYS REVENUE" />
-    <div className="abc-grid">{classes.map(({ c, count, revenue }) => <div key={c} className={`abc-card abc-${c}`}><strong>{c}</strong><div><b>{count} products · {Math.round((revenue / totalRevenue) * 100)}% of revenue</b><small>{c === 'A' ? 'Never run out; review weekly' : c === 'B' ? 'Standard reorder cycle' : 'Keep lean; candidates for delisting'}</small></div><span>{peso(revenue, 0)}</span></div>)}</div>
+    <div className="abc-grid">{classes.map(({ c, count, revenue }) => { const share = totalRevenue > 0 ? Math.round((revenue / totalRevenue) * 100) : 0; return <div key={c} className={`abc-card abc-${c}`}>
+      <div className="abc-head"><strong>{c}</strong><div><b>{count} product{count === 1 ? '' : 's'}</b><small>{share}% of revenue</small></div></div>
+      <span className="abc-revenue">{peso(revenue, 0)}</span>
+      <div className="abc-bar" role="img" aria-label={`${share}% of revenue`}><i style={{ width: `${share}%` }} /></div>
+      <small className="abc-note">{c === 'A' ? 'Never run out; review weekly' : c === 'B' ? 'Standard reorder cycle' : 'Keep lean; candidates for delisting'}</small>
+    </div> })}</div>
   </div>
 }
 
@@ -116,7 +122,7 @@ export function InsightsFeedPanel() {
   }
 
   return <div className="module-panel">
-    <div className="module-intro"><div><span className="eyebrow">AI INSIGHTS</span><h2>Recommendations for today</h2><p>Generated from sales, stock, expiry, waste and customer-request data. Refreshes after every sale.</p></div><Segmented label="Filter insights" options={['All', 'Risks', 'Opportunities'] as const} value={filter} onChange={setFilter} /></div>
+    <div className="module-intro"><div><span className="eyebrow">AI INSIGHTS</span><h2>Recommendations for today</h2><p>Generated from sales, stock, expiry, write-off and customer-request data. Refreshes after every sale.</p></div><Segmented label="Filter insights" options={['All', 'Risks', 'Opportunities'] as const} value={filter} onChange={setFilter} /></div>
     <div className="ask-box"><span className="ask-mark">AI</span><input placeholder="Ask about your store… e.g. “What should I reorder?”" value={question} onChange={(e) => setQuestion(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') ask(question) }} /><button className="primary-button" onClick={() => ask(question)}>ASK</button></div>
     <div className="prompt-chips">{prompts.map((p) => <button key={p} onClick={() => ask(p)}>{p}</button>)}</div>
     {conversation.map((turn, i) => <div className="answer" key={i}><span className="eyebrow">YOU ASKED · {turn.q.toUpperCase()}</span><p>{turn.a.text}</p>{turn.a.bullets && <ul>{turn.a.bullets.map((b) => <li key={b}>{b}</li>)}</ul>}{turn.a.action && <button className="link-button" onClick={() => actions.navigate(turn.a.action!.workspace, turn.a.action!.productId ? { forecastProductId: turn.a.action!.productId } : undefined)}>{turn.a.action.label} →</button>}</div>)}

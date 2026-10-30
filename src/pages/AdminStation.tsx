@@ -19,6 +19,7 @@ import {
 import { useStore } from '../store/StoreContext'
 import { DataImportPanel } from '../workspace/editors/DataImport'
 import { Empty, Field, Modal } from '../workspace/ui'
+import { Select } from '../workspace/Select'
 
 const POLL_MS = 3000
 
@@ -181,10 +182,10 @@ export function AdminStationPanel() {
           </> : <>
             <p className="terminal-locked">{terminal.is_active ? 'Locked · waiting for assignment' : 'Terminal disabled'}</p>
             <div className="terminal-assign">
-              <select className="select" aria-label={`Cashier for ${terminal.terminal_id}`} value={pick} disabled={!terminal.is_active || available.length === 0} onChange={(e) => setChoice({ ...choice, [terminal.terminal_id]: e.target.value })}>
+              <Select className="select" aria-label={`Cashier for ${terminal.terminal_id}`} value={pick} disabled={!terminal.is_active || available.length === 0} onChange={(e) => setChoice({ ...choice, [terminal.terminal_id]: e.target.value })}>
                 <option value="">{available.length ? 'Choose cashier…' : 'No free cashiers'}</option>
                 {available.map((e) => <option key={e.user_id} value={e.user_id}>{e.name}</option>)}
-              </select>
+              </Select>
               <button className="primary-button" disabled={!pick || busy !== null} onClick={() => { const e = available.find((x) => String(x.user_id) === pick); if (e) void assign(e.user_id, terminal.terminal_id, e.name) }}>ASSIGN</button>
             </div>
           </>}
