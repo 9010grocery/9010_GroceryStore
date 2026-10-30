@@ -25,7 +25,7 @@ export const editors = {
   'Inventory Table': InventoryTable,
   Purchasing: PurchasingPanel,
   'Purchase Orders': PurchaseOrdersPanel,
-  'Waste Log': WastePanel,
+  'Write-off Log': WastePanel,
   'AI Insights': InsightsFeedPanel,
   'Sales History': SalesHistoryPanel,
   'Trend Analysis': TrendPanel,
@@ -42,7 +42,7 @@ export type Editor = keyof typeof editors
 export const editorGroups: { category: string; items: Editor[] }[] = [
   { category: 'Owner', items: ['Admin Station', 'Employees', 'Data Import'] },
   { category: 'Sales', items: ['Dashboard', 'Product Grid', 'Cart', 'Transactions', 'Returns & Refunds', 'Shift & Cash Drawer'] },
-  { category: 'Stock', items: ['Inventory Metrics', 'Inventory Table', 'Purchasing', 'Purchase Orders', 'Waste Log'] },
+  { category: 'Stock', items: ['Inventory Metrics', 'Inventory Table', 'Purchasing', 'Purchase Orders', 'Write-off Log'] },
   { category: 'AI & Analytics', items: ['AI Insights', 'Sales History', 'Trend Analysis', 'Basket Analysis', 'Reports'] },
   { category: 'Store', items: ['Customer Requests', 'Settings Navigation', 'Business Settings'] },
 ]
@@ -61,7 +61,7 @@ export const editorWorkspaces: Record<Editor, WorkspaceName[]> = {
   'Inventory Table': ['Inventory'],
   Purchasing: ['Purchasing', 'Inventory'],
   'Purchase Orders': ['Purchasing'],
-  'Waste Log': ['Waste'],
+  'Write-off Log': ['Write-offs'],
   'AI Insights': ['AI Insights'],
   'Sales History': ['AI Insights'],
   'Trend Analysis': ['AI Insights'],

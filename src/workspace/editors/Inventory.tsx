@@ -2,11 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { categories, colorForCategory } from '../../data/defaults'
 import type { Product } from '../../data/types'
-import { compactPeso, dateKey, downloadCsv, num, peso, shortDate, time } from '../../lib/format'
+import { compactPeso, dateKey, num, peso, shortDate, time } from '../../lib/format'
 import { apiErrorMessage, getBatches, getMovements, putBatchExpiry, putBatchMarkdown, type BatchRow, type MovementsPage, type StockMovement } from '../../services/api'
 import { useAnalytics, useCurrentUser, useStore, type UiState } from '../../store/StoreContext'
-import { Empty, Field, Metric, Modal, Segmented, StatusPill } from '../ui'
+import { DatePicker } from '../DatePicker'
+import { ExportMenu } from '../ExportMenu'
+import { Empty, Field, Metric, Modal, SearchField, Segmented, StatusPill } from '../ui'
 import { Pager } from './Transactions'
+import { Select } from '../Select'
 
 export function InventoryMetrics() {
   const { state } = useStore()
@@ -17,7 +20,7 @@ export function InventoryMetrics() {
   const expiring = analyses.filter((a) => a.expiryDays !== null && a.expiryDays <= state.settings.expiryWarningDays)
   const out = state.products.filter((p) => p.stock <= 0).length
   return <div className="inventory-metrics"><div className="inventory-heading"><div><span className="eyebrow">STOCK OVERVIEW</span><h2>Inventory at a glance</h2></div>
-    <button className="outline-button" onClick={() => downloadCsv('inventory.csv', ['SKU', 'Product', 'Category', 'On hand', 'Unit cost', 'Price', 'Value at cost', 'Expiry'], state.products.map((p) => [p.sku, p.name, p.category, p.stock, p.cost, p.price, (p.cost * p.stock).toFixed(2), p.expiry ? shortDate(p.expiry) : '']))}>↓ EXPORT</button></div>
+</div>
     <div className="inventory-metric-grid">
       <Metric label="Active products" value={num(state.products.filter((p) => p.active).length)} change={`${out} out`} note="of stock" accent="green" />
       <Metric label="Inventory value" value={compactPeso(value)} change={compactPeso(retail)} note="at retail" accent="blue" />
@@ -69,16 +72,19 @@ export function InventoryTable() {
 
   return <div className="table-panel">
     <div className="table-toolbar">
-      <label className="search-field compact"><span>⌕</span><input placeholder="Filter by name, SKU or barcode" value={query} onChange={(e) => { setQuery(e.target.value); setPage(0) }} /></label>
-      <div>
-        <select className="select" aria-label="Category" value={category} onChange={(e) => { setCategory(e.target.value); setPage(0) }}><option>All</option>{[...new Set(state.products.map((p) => p.category))].map((c) => <option key={c}>{c}</option>)}</select>
-        <div className="toolbar-actions">
-          {owner && <button className="outline-button" onClick={() => setReceiving('pick')}>⇩ RECEIVE DELIVERY</button>}
-          <button className="primary-button" onClick={() => setEditing('new')}>＋ ADD PRODUCT</button>
-        </div>
+      <div className="toolbar-filters">
+        <SearchField compact placeholder="Filter by name, SKU or barcode" value={query} onChange={(v) => { setQuery(v); setPage(0) }} />
+        <Select className="select" aria-label="Category" value={category} onChange={(e) => { setCategory(e.target.value); setPage(0) }}><option value="All">All categories</option>{[...new Set(state.products.map((p) => p.category))].map((c) => <option key={c}>{c}</option>)}</Select>
+        <Select className="select" aria-label="Stock status" value={filter} onChange={(e) => { actions.setUi({ inventoryFilter: e.target.value as UiState['inventoryFilter'] }); setPage(0) }}>
+          <option value="All">All stock levels</option><option>Low stock</option><option>Near expiry</option><option>Out of stock</option>
+        </Select>
+      </div>
+      <div className="toolbar-actions">
+        <ExportMenu build={() => ({ filename: `inventory-${dateKey(new Date())}`, title: 'Inventory', subtitle: `${rows.length} product${rows.length === 1 ? '' : 's'}${category !== 'All' || filter !== 'All' || q ? ' (filtered)' : ''} · ${shortDate(new Date())}`, headers: ['SKU', 'Product', 'Category', 'On hand', 'Unit cost', 'Price', 'Value at cost', 'Expiry'], rows: rows.map((p) => [p.sku, p.name, p.category, p.stock, p.cost, p.price, (p.cost * p.stock).toFixed(2), p.expiry ? shortDate(p.expiry) : '']) })} />
+        {owner && <button className="outline-button" onClick={() => setReceiving('pick')}>⇩ RECEIVE DELIVERY</button>}
+        <button className="primary-button" onClick={() => setEditing('new')}>＋ ADD PRODUCT</button>
       </div>
     </div>
-    <Segmented label="Stock status" options={['All', 'Low stock', 'Near expiry', 'Out of stock'] as const} value={filter} onChange={(v: UiState['inventoryFilter']) => { actions.setUi({ inventoryFilter: v }); setPage(0) }} />
     <div className="data-table-wrap"><table className="data-table"><thead><tr>{[header('PRODUCT', 'name'), header('CATEGORY'), header('ON HAND', 'stock'), header('AI REORDER AT'), header('DAYS OF COVER', 'cover'), header('STATUS'), header('EXPIRY', 'expiry'), header('VALUE', 'value'), header('')]}</tr></thead>
       <tbody>{visible.map((p) => {
         const a = byId.get(p.id)
@@ -91,11 +97,11 @@ export function InventoryTable() {
           <td><StatusPill value={statusOf(p)} /></td>
           <td>{p.expiry ? shortDate(p.expiry) : '—'}</td>
           <td>{peso(p.stock * p.cost, 0)}</td>
-          <td className="row-actions"><button onClick={() => setAdjusting(p)} title="Count or remove stock">±</button><button onClick={() => setEditing(p)} title="Edit product">✎</button><RowMenu items={[
+          <td><div className="row-actions"><button onClick={() => setAdjusting(p)} title="Count or remove stock">±</button><button onClick={() => setEditing(p)} title="Edit product">✎</button><RowMenu items={[
             ...(owner ? [{ label: 'Receive delivery', run: () => setReceiving(p) }, { label: 'Batch discount', run: () => setBatching(p) }] : []),
             { label: 'Stock history', run: () => setHistory(p) },
             { label: 'Open forecast', run: () => actions.navigate('AI Insights', { forecastProductId: p.id }) },
-          ]} /></td>
+          ]} /></div></td>
         </tr>
       })}</tbody></table>
       {rows.length === 0 && <Empty>No products match.</Empty>}
@@ -193,15 +199,15 @@ function ProductModal({ product, onClose }: { product: Product | null; onClose: 
       <Field label="MIN. REORDER POINT" hint="AI raises this when forecast demand is higher."><input type="number" min={0} value={draft.reorderPoint} onChange={(e) => set('reorderPoint', Number(e.target.value))} /></Field>
       <Field label="SUPPLIER"><input list="product-suppliers" value={draft.supplierId} placeholder="Supplier name" onChange={(e) => set('supplierId', e.target.value)} /><datalist id="product-suppliers">{knownSuppliers.map((name) => <option key={name} value={name} />)}</datalist></Field>
       <Field label="LEAD TIME (DAYS)"><input type="number" min={0} value={draft.leadTimeDays} onChange={(e) => set('leadTimeDays', Number(e.target.value))} /></Field>
-      <Field label="NEAREST EXPIRY"><input type="date" value={draft.expiry ? dateKey(draft.expiry) : ''} onChange={(e) => set('expiry', e.target.value ? new Date(`${e.target.value}T00:00:00`).toISOString() : null)} /></Field>
+      <Field label="NEAREST EXPIRY"><DatePicker ariaLabel="Nearest expiry" clearable value={draft.expiry ? dateKey(draft.expiry) : ''} onChange={(v) => set('expiry', v ? new Date(`${v}T00:00:00`).toISOString() : null)} /></Field>
       <Field label="SENIOR / PWD DISCOUNT" hint="Untick items that don't qualify; they're charged in full on Senior/PWD sales."><label className="check-row"><input type="checkbox" checked={draft.seniorPwdEligible !== false} onChange={(e) => set('seniorPwdEligible', e.target.checked)} /> Eligible for the 20% discount</label></Field>
     </div>
     <div className="promo-box">
       <div className="promo-title">PROMOTION <small>Optional. A % off every unit of this product between two dates. It starts and stops by itself.</small></div>
       <div className="form-grid">
         <Field label="PROMO DISCOUNT (%)" hint="Leave empty for no promo"><span className="percent-input"><input type="number" min={0} max={90} step={1} placeholder="0" value={promo?.percent ? promo.percent : ''} onChange={(e) => setPromo({ percent: Number(e.target.value) })} /><i>%</i></span></Field>
-        <Field label="FIRST DAY"><input type="date" value={promo?.start ?? ''} onChange={(e) => setPromo({ start: e.target.value })} /></Field>
-        <Field label="LAST DAY (INCLUDED)"><input type="date" min={promo?.start || undefined} value={promo?.end ?? ''} onChange={(e) => setPromo({ end: e.target.value })} /></Field>
+        <Field label="FIRST DAY"><DatePicker ariaLabel="First day" value={promo?.start ?? ''} onChange={(v) => setPromo({ start: v })} /></Field>
+        <Field label="LAST DAY (INCLUDED)"><DatePicker ariaLabel="Last day" min={promo?.start || undefined} value={promo?.end ?? ''} onChange={(v) => setPromo({ end: v })} /></Field>
       </div>
       {promoProblem && <p className="pin-error" role="alert">{promoProblem}</p>}
       {draft.promoPercent ? <p className="batch-hint">Running now: {draft.promoPercent}% off.</p> : null}
@@ -245,7 +251,7 @@ function AdjustModal({ product, onClose }: { product: Product; onClose: () => vo
     <Segmented label="Adjustment type" options={['Count', 'Remove'] as const} value={mode} onChange={(m) => { setMode(m); setQty(m === 'Count' ? product.stock : 0) }} />
     <div className="form-grid">
       <Field label={mode === 'Count' ? 'COUNTED ON SHELF' : 'QUANTITY TO REMOVE'} hint={mode === 'Remove' ? `At most ${product.stock} (what is on hand)` : undefined}><input autoFocus type="number" min={0} max={mode === 'Remove' ? product.stock : undefined} value={qty} onChange={(e) => setQty(Math.max(0, Math.round(Number(e.target.value))))} /></Field>
-      <Field label="NOTE"><input value={note} placeholder={mode === 'Remove' ? 'Use the Waste log for spoilage' : 'Count sheet, who counted…'} onChange={(e) => setNote(e.target.value)} /></Field>
+      <Field label="NOTE"><input value={note} placeholder={mode === 'Remove' ? 'Use the Write-offs log for spoilage' : 'Count sheet, who counted…'} onChange={(e) => setNote(e.target.value)} /></Field>
     </div>
     <p className="muted-text">Current: <b>{product.stock}</b> → New: <b>{Math.max(0, product.stock + delta)}</b> {product.unit}s. A new delivery? Close this and use ⇩ RECEIVE so it gets its own batch and expiry date.</p>
   </Modal>
@@ -290,10 +296,10 @@ function ReceiveModal({ product, onClose }: { product: Product | null; onClose: 
 
   return <Modal title={chosen ? `Receive delivery · ${chosen.name}` : 'Receive delivery'} eyebrow="STOCK IN" onClose={onClose} footer={<><button className="outline-button" disabled={busy} onClick={onClose}>CANCEL</button><button className="primary-button" disabled={!valid || busy} onClick={() => void save()}>{busy ? 'SAVING…' : `RECEIVE ${quantity > 0 ? `+${quantity}` : ''}`}</button></>}>
     <div className="form-grid">
-      {!product && <Field label="PRODUCT"><select autoFocus value={picked} onChange={(e) => { setPicked(e.target.value); const p = state.products.find((x) => x.id === e.target.value); setCost(p && p.cost ? String(p.cost) : '') }}><option value="">Choose a product…</option>{state.products.filter((p) => p.active).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>}
+      {!product && <Field label="PRODUCT"><Select autoFocus value={picked} onChange={(e) => { setPicked(e.target.value); const p = state.products.find((x) => x.id === e.target.value); setCost(p && p.cost ? String(p.cost) : '') }}><option value="">Choose a product…</option>{state.products.filter((p) => p.active).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></Field>}
       <Field label="QUANTITY RECEIVED"><input autoFocus={Boolean(product)} type="number" min={1} value={qty} onChange={(e) => setQty(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') void save() }} /></Field>
       <Field label="BATCH / LOT NO." hint="From the box or delivery receipt. Leave blank if none."><input value={batch} maxLength={50} onChange={(e) => setBatch(e.target.value)} /></Field>
-      <Field label="EXPIRY DATE" hint={expired ? 'That date has already passed' : tooFar ? 'More than 10 years away. Check the year' : 'Leave blank for items that do not expire'}><input type="date" min={today} max={maxDate} value={expiry} onChange={(e) => setExpiry(e.target.value)} /></Field>
+      <Field label="EXPIRY DATE" hint={expired ? 'That date has already passed' : tooFar ? 'More than 10 years away. Check the year' : 'Leave blank for items that do not expire'}><DatePicker ariaLabel="Expiry date" clearable min={today} max={maxDate} value={expiry} onChange={setExpiry} /></Field>
       <Field label="UNIT COST (OPTIONAL)" hint="Updates the product's cost price"><input type="number" min={0} step={0.25} value={cost} onChange={(e) => setCost(e.target.value)} /></Field>
       <Field label="NOTE"><input value={note} maxLength={200} placeholder="Delivery receipt #, supplier…" onChange={(e) => setNote(e.target.value)} /></Field>
     </div>
@@ -408,7 +414,7 @@ function BatchesModal({ product, onClose }: { product: Product; onClose: () => v
           </div>
           <div className="batch-card-fields">
             <Field label="EXPIRY DATE" hint={b.daysLeft === null ? 'Not set' : b.daysLeft < 0 ? 'Already expired' : `${b.daysLeft} day${b.daysLeft === 1 ? '' : 's'} left`}>
-              <input aria-label={`Expiry date of batch ${b.batchNumber ?? i + 1}`} type="date" value={dates[b.batchId] ?? ''} onChange={(e) => setDates({ ...dates, [b.batchId]: e.target.value })} />
+              <DatePicker ariaLabel={`Expiry date of batch ${b.batchNumber ?? i + 1}`} value={dates[b.batchId] ?? ''} onChange={(v) => setDates({ ...dates, [b.batchId]: v })} />
             </Field>
             <Field label="DISCOUNT FOR THIS BATCH" hint="Leave empty for full price">
               <span className="percent-input"><input aria-label={`Percent off batch ${b.batchNumber ?? i + 1}`} type="number" min={0} max={90} step={1} placeholder="0" value={draft[b.batchId] ?? ''} onChange={(e) => setDraft({ ...draft, [b.batchId]: e.target.value })} /><i>%</i></span>

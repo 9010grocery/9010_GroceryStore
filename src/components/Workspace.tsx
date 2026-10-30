@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type PointerEvent } from 'react'
+import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent } from 'react'
 import { createPortal } from 'react-dom'
 import { Navigate, useNavigate } from 'react-router-dom'
 import type { WorkspaceName } from '../data/types'
@@ -26,12 +26,13 @@ function defaultLayout(workspace: WorkspaceName): LayoutNode {
   switch (workspace) {
     case 'Admin Station': return makeSplit('horizontal', makePanel('Admin Station'), makePanel('Employees'), 0.5)
     case 'Point of Sale': return makeSplit('horizontal', makePanel('Product Grid'), makePanel('Cart'), 0.64)
-    case 'Transactions': return makeSplit('horizontal', makePanel('Transactions'), makeSplit('vertical', makePanel('Returns & Refunds'), makePanel('Shift & Cash Drawer'), 0.6), 0.6)
-    case 'Inventory': return makeSplit('horizontal', makeSplit('vertical', makePanel('Inventory Metrics'), makePanel('Purchasing'), 0.3), makePanel('Inventory Table'), 0.45)
+    case 'Transactions': return makeSplit('horizontal', makePanel('Transactions'), makePanel('Returns & Refunds'), 0.6)
+    // Overview strip across the top (30%), the stock table (60%) and purchasing (40%) below.
+    case 'Inventory': return makeSplit('vertical', makePanel('Inventory Metrics'), makeSplit('horizontal', makePanel('Inventory Table'), makePanel('Purchasing'), 0.6), 0.3)
     case 'Purchasing': return makeSplit('horizontal', makePanel('Purchasing'), makePanel('Purchase Orders'), 0.58)
     case 'AI Insights': return makeSplit('horizontal', makeSplit('vertical', makePanel('Sales History'), makePanel('Trend Analysis'), 0.52), makeSplit('vertical', makePanel('AI Insights'), makePanel('Basket Analysis'), 0.55), 0.55)
     case 'Reports': return makePanel('Reports')
-    case 'Waste': return makePanel('Waste Log')
+    case 'Write-offs': return makePanel('Write-off Log')
     case 'Requests': return makePanel('Customer Requests')
     case 'Settings': return makeSplit('horizontal', makePanel('Settings Navigation'), makePanel('Business Settings'), 0.3)
     default: return makePanel('Dashboard')
@@ -490,7 +491,7 @@ function AccountMenu() {
 function workspaceDescription(workspace: WorkspaceName) {
   const descriptions: Record<WorkspaceName, string> = {
     'Admin Station': 'Terminals, cashiers & team', Dashboard: 'Store overview', 'Point of Sale': 'Checkout terminal', Transactions: 'Receipts, returns & cash drawer', Inventory: 'Stock control', Purchasing: 'AI replenishment & suppliers',
-    'AI Insights': 'Forecasts, trends & recommendations', Reports: 'BIR readings, tax & operations', Waste: 'Loss tracking', Requests: 'Customer demand', Settings: 'Store configuration',
+    'AI Insights': 'Forecasts, trends & recommendations', Reports: 'BIR readings, tax & operations', 'Write-offs': 'Loss tracking', Requests: 'Customer demand', Settings: 'Store configuration',
   }
   return descriptions[workspace]
 }
@@ -574,7 +575,7 @@ function AreaPanel({ node, onEditorChange, onSplitDrag }: {
   onSplitDrag: (event: PointerEvent<HTMLButtonElement>, id: string) => void
 }) {
   const [menuOpen, setMenuOpen] = useState(false)
-  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number } | null>(null)
+  const [menuPosition, setMenuPosition] = useState<{ top: number; left: number; maxHeight: number } | null>(null)
   const { state } = useStore()
   const user = useCurrentUser()
   // A panel can only be switched to editors from workspaces this role may open (cashiers never see owner screens).
@@ -607,6 +608,28 @@ function AreaPanel({ node, onEditorChange, onSplitDrag }: {
     }
   }, [menuOpen])
 
+  // Opened from the keyboard, the highlighted item gets focus so the arrow keys work straight away.
+  useEffect(() => {
+    if (!menuOpen || !menuPosition) return
+    const items = menuRef.current?.querySelectorAll<HTMLButtonElement>('.editor-menu-item')
+    const current = menuRef.current?.querySelector<HTMLButtonElement>('.editor-menu-item.selected')
+    ;(current ?? items?.[0])?.focus()
+  }, [menuOpen, menuPosition])
+
+  function onMenuKey(event: ReactKeyboardEvent<HTMLDivElement>) {
+    if (event.key === 'Escape') { event.preventDefault(); event.stopPropagation(); setMenuOpen(false); triggerRef.current?.focus(); return }
+    if (event.key === 'Tab') { setMenuOpen(false); return }
+    const items = [...(menuRef.current?.querySelectorAll<HTMLButtonElement>('.editor-menu-item') ?? [])]
+    if (items.length === 0) return
+    const at = items.indexOf(document.activeElement as HTMLButtonElement)
+    const target = event.key === 'ArrowDown' ? items[(at + 1) % items.length]
+      : event.key === 'ArrowUp' ? items[(at - 1 + items.length) % items.length]
+      : event.key === 'Home' ? items[0]
+      : event.key === 'End' ? items[items.length - 1]
+      : null
+    if (target) { event.preventDefault(); target.focus(); target.scrollIntoView({ block: 'nearest' }) }
+  }
+
   function toggleMenu() {
     if (menuOpen) {
       setMenuOpen(false)
@@ -615,15 +638,15 @@ function AreaPanel({ node, onEditorChange, onSplitDrag }: {
     const bounds = triggerRef.current?.getBoundingClientRect()
     if (!bounds) return
     const menuWidth = Math.min(240, window.innerWidth - 16)
-    const menuHeight = Math.min(window.innerHeight * 0.72, 560)
-    const roomBelow = window.innerHeight - bounds.bottom - 8
-    const roomAbove = bounds.top - 8
-    const openAbove = roomBelow < 340 && roomAbove > roomBelow
-    const top = openAbove
-      ? Math.max(8, bounds.top - Math.min(menuHeight, roomAbove) - 5)
-      : Math.min(bounds.bottom + 5, window.innerHeight - Math.min(menuHeight, roomBelow) - 8)
+    const wanted = Math.min(window.innerHeight * 0.72, 560)
+    const roomBelow = window.innerHeight - bounds.bottom - 13
+    const roomAbove = bounds.top - 13
+    const openAbove = roomBelow < Math.min(wanted, 340) && roomAbove > roomBelow
+    // The list is never taller than the room it opens into, so its own scrollbar always reaches the last item.
+    const maxHeight = Math.max(120, Math.min(wanted, openAbove ? roomAbove : roomBelow))
+    const top = openAbove ? Math.max(8, bounds.top - maxHeight - 5) : bounds.bottom + 5
     const left = Math.max(8, Math.min(bounds.left, window.innerWidth - menuWidth - 8))
-    setMenuPosition({ top, left })
+    setMenuPosition({ top, left, maxHeight })
     setMenuOpen(true)
   }
 
@@ -631,10 +654,10 @@ function AreaPanel({ node, onEditorChange, onSplitDrag }: {
     <header className="area-header">
       <div className="area-header-left">
         <div className="editor-menu-anchor">
-          <button ref={triggerRef} className="editor-type-trigger" aria-haspopup="menu" aria-expanded={menuOpen} onClick={toggleMenu} onKeyDown={(event) => { if (event.key === 'Escape') setMenuOpen(false) }}>
-            <span className="editor-type-icon">{iconRegistry.editors[node.editor]}</span><span>{node.editor}</span><span className="editor-type-caret">⌄</span>
+          <button ref={triggerRef} className="editor-type-trigger" aria-haspopup="menu" aria-expanded={menuOpen} onClick={toggleMenu} onKeyDown={(event) => { if (event.key === 'Escape') setMenuOpen(false); else if (event.key === 'ArrowDown' && !menuOpen) { event.preventDefault(); toggleMenu() } }}>
+            <span className="editor-type-icon">{iconRegistry.editors[node.editor]}</span><span>{node.editor}</span><svg className="editor-type-caret" viewBox="0 0 12 12" aria-hidden="true"><path d="M2.5 4.5 6 8l3.5-3.5" /></svg>
           </button>
-          {menuOpen && menuPosition && createPortal(<div ref={menuRef} className="editor-type-menu" style={menuPosition} role="menu" aria-label="Editor Type" onKeyDown={(event) => { if (event.key === 'Escape') setMenuOpen(false) }}>
+          {menuOpen && menuPosition && createPortal(<div ref={menuRef} className="editor-type-menu" style={menuPosition} role="menu" aria-label="Editor Type" onKeyDown={onMenuKey}>
             {visibleGroups.map((group) => <section className="editor-menu-group" key={group.category} role="group" aria-label={group.category}>
               <h3>{group.category}</h3>
               {group.items.map((editor) => <button key={editor} role="menuitemradio" aria-checked={node.editor === editor} className={node.editor === editor ? 'editor-menu-item selected' : 'editor-menu-item'} onClick={() => { onEditorChange(node.id, editor); setMenuOpen(false) }}>
