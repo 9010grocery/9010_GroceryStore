@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from 'react'
 import { createPortal } from 'react-dom'
 import { useStore } from '../store/StoreContext'
 
@@ -39,6 +39,50 @@ export function Modal({ title, eyebrow, onClose, children, footer, wide }: { tit
       {footer && <footer className="modal-footer">{footer}</footer>}
     </div>
   </div>, document.body)
+}
+
+/** Asks "are you sure?" before anything is removed, cleared or discarded. Escape or CANCEL backs out. */
+export function ConfirmModal({ title, message, confirmLabel, onConfirm, onCancel, danger = true }: {
+  title: string; message: ReactNode; confirmLabel: string; onConfirm: () => void; onCancel: () => void; danger?: boolean
+}) {
+  useEffect(() => {
+    // Runs before any dialog underneath, so Escape closes only this one.
+    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') { event.stopImmediatePropagation(); onCancel() } }
+    window.addEventListener('keydown', onKey, true)
+    return () => window.removeEventListener('keydown', onKey, true)
+  }, [onCancel])
+  return createPortal(<div className="modal-backdrop confirm-backdrop" onPointerDown={(event) => { if (event.target === event.currentTarget) onCancel() }}>
+    <div className="modal confirm-modal" role="alertdialog" aria-modal="true" aria-label={title}>
+      <header className="modal-header"><div><h2>{title}</h2></div></header>
+      <div className="modal-body">{message}</div>
+      <footer className="modal-footer">
+        <button className="outline-button" autoFocus onClick={onCancel}>CANCEL</button>
+        <button className={danger ? 'danger-button' : 'primary-button'} onClick={onConfirm}>{confirmLabel}</button>
+      </footer>
+    </div>
+  </div>, document.body)
+}
+
+/** The one search box: magnifier, the text, and an X to clear it once something is typed. */
+export function SearchField({ value, onChange, placeholder, compact, autoFocus, inputRef, onKeyDown, ariaLabel }: {
+  value: string
+  onChange: (value: string) => void
+  placeholder: string
+  compact?: boolean
+  autoFocus?: boolean
+  inputRef?: RefObject<HTMLInputElement | null>
+  onKeyDown?: (event: ReactKeyboardEvent<HTMLInputElement>) => void
+  ariaLabel?: string
+}) {
+  const own = useRef<HTMLInputElement>(null)
+  const input = inputRef ?? own
+  return <label className={compact ? 'search-field compact' : 'search-field'}>
+    <span aria-hidden="true">⌕</span>
+    <input ref={input} autoFocus={autoFocus} aria-label={ariaLabel ?? placeholder} placeholder={placeholder} value={value} onChange={(e) => onChange(e.target.value)} onKeyDown={onKeyDown} />
+    {value !== '' && <button type="button" className="search-clear" aria-label="Clear search" title="Clear" onClick={(event) => { event.preventDefault(); onChange(''); input.current?.focus() }}>
+      <svg viewBox="0 0 12 12" aria-hidden="true"><path d="M3 3l6 6M9 3l-6 6" /></svg>
+    </button>}
+  </label>
 }
 
 export function Field({ label, children, hint }: { label: string; children: ReactNode; hint?: string }) {

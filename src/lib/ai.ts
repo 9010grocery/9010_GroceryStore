@@ -265,7 +265,7 @@ export function buildInsights(analyses: ProductAnalysis[], transactions: Transac
       id: `expiry-${item.product.id}`, severity: 'warning',
       title: `${item.atRiskUnits} ${item.product.name} likely to expire unsold`,
       detail: `Expires in ${item.expiryDays} day(s); expected sales before then are ~${Math.round(item.dailyDemand * Math.max(0, item.expiryDays ?? 0))}. A ${Math.round(item.markdown * 100)}% markdown could recover ${peso(item.atRiskUnits * item.product.price * (1 - item.markdown), 0)}.`,
-      metric: `${peso(item.atRiskUnits * item.product.cost, 0)} at risk`, action: { label: 'Open waste', workspace: 'Waste', productId: item.product.id },
+      metric: `${peso(item.atRiskUnits * item.product.cost, 0)} at risk`, action: { label: 'Open write-offs', workspace: 'Write-offs', productId: item.product.id },
     })
   }
 
@@ -296,7 +296,7 @@ export function buildInsights(analyses: ProductAnalysis[], transactions: Transac
   const monthWaste = waste.filter((entry) => daysBetween(entry.date, now) <= 30)
   const wasteValue = monthWaste.reduce((sum, entry) => sum + entry.value, 0)
   const sales30 = transactions.reduce((sum, txn) => sum + netTotal(txn), 0) / DETAIL_DAYS * 30
-  if (wasteValue > 0) insights.push({ id: 'waste', severity: wasteValue / sales30 > 0.01 ? 'warning' : 'info', title: `Shrink is ${(wasteValue / (sales30 || 1) * 100).toFixed(2)}% of sales this month`, detail: `${peso(wasteValue, 0)} written off across ${monthWaste.length} entries. ${mostCommon(monthWaste.map((e) => e.reason))} is the top reason.`, metric: peso(wasteValue, 0), action: { label: 'Waste log', workspace: 'Waste' } })
+  if (wasteValue > 0) insights.push({ id: 'waste', severity: wasteValue / sales30 > 0.01 ? 'warning' : 'info', title: `Shrink is ${(wasteValue / (sales30 || 1) * 100).toFixed(2)}% of sales this month`, detail: `${peso(wasteValue, 0)} written off across ${monthWaste.length} entries. ${mostCommon(monthWaste.map((e) => e.reason))} is the top reason.`, metric: peso(wasteValue, 0), action: { label: 'Waste log', workspace: 'Write-offs' } })
 
   return insights
 }
@@ -323,7 +323,7 @@ export function askAssistant(question: string, analyses: ProductAnalysis[], tran
   if (/expir|spoil|waste|markdown/.test(q)) {
     const list = analyses.filter((a) => a.atRiskUnits > 0)
     if (!list.length) return { text: 'No stock is predicted to expire before it sells.' }
-    return { text: 'These items are predicted to expire before they sell:', bullets: list.map((a) => `${a.product.name}: ${a.atRiskUnits} at risk in ${a.expiryDays}d — suggest ${Math.round(a.markdown * 100)}% off`), action: { label: 'Waste log', workspace: 'Waste' } }
+    return { text: 'These items are predicted to expire before they sell:', bullets: list.map((a) => `${a.product.name}: ${a.atRiskUnits} at risk in ${a.expiryDays}d — suggest ${Math.round(a.markdown * 100)}% off`), action: { label: 'Waste log', workspace: 'Write-offs' } }
   }
   if (/together|bundle|basket|pair/.test(q)) {
     const rules = basketRules(transactions).slice(0, 5)

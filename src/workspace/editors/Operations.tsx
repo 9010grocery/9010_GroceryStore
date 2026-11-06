@@ -5,13 +5,15 @@ import { daysBetween, initials, peso, relativeDay, time } from '../../lib/format
 import { useServerData } from '../../hooks/useServerData'
 import { getEmployeeActivity, getEmployees, getRequests, getRequestsSummary, getWaste, getWasteSummary, type EmployeeActivity, type EmployeeRow, type RequestsSummary, type WasteRow } from '../../services/api'
 import { allowedWorkspaces, useAnalytics, useCurrentUser, useStore } from '../../store/StoreContext'
-import { BarList, Empty, Field, Metric, Modal, SERIES, Segmented, SectionHeading, StatusPill } from '../ui'
-     import { DeleteEmployeeButton } from './DeleteEmployee'
+import { DateRangePicker } from '../DatePicker'
+import { BarList, Empty, Field, Metric, Modal, SearchField, SectionHeading, Segmented, SERIES, StatusPill } from '../ui'
+import { Select } from '../Select'
+import { DeleteEmployeeButton } from './DeleteEmployee'
 
 const ymd = (d: Date) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 const daysAgo = (n: number) => ymd(new Date(Date.now() - n * 86_400_000))
 
-// ---------- Waste ----------
+// ---------- Write-offs ----------
 
 const wasteReasons: WasteReason[] = ['Expired', 'Damaged', 'Spoiled', 'Theft / Shrink', 'Customer return', 'Other']
 
@@ -64,19 +66,18 @@ export function WastePanel() {
     const problem = await actions.logWaste(logging)
     setBusy(false)
     if (problem) { setFormError(problem); return }
-    actions.toast('Waste logged; stock reduced')
+    actions.toast('Write-off logged; stock reduced')
     setLogging(null)
   }
 
   return <div className="module-panel">
-    <div className="module-intro"><div><span className="eyebrow">LOSS PREVENTION</span><h2>Waste &amp; spoilage</h2><p>Every write-off reduces stock (earliest-expiry batch first) and is valued at cost. The AI flags stock that is likely to expire before it sells.</p></div>
-      <div className="intro-actions"><button className="primary-button" onClick={open}>＋ LOG WASTE</button></div></div>
+    <div className="module-intro"><div><span className="eyebrow">LOSS PREVENTION</span><h2>Write-offs &amp; spoilage</h2><p>Every write-off reduces stock (earliest-expiry batch first) and is valued at cost. The AI flags stock that is likely to expire before it sells.</p></div>
+      <div className="intro-actions"><button className="primary-button" onClick={open}>＋ LOG WRITE-OFF</button></div></div>
     <div className="filter-bar">
-      <label className="filter-field"><span>FROM</span><input type="date" aria-label="From date" value={from} max={to || undefined} onChange={(e) => setFrom(e.target.value)} /></label>
-      <label className="filter-field"><span>TO</span><input type="date" aria-label="To date" value={to} min={from || undefined} onChange={(e) => setTo(e.target.value)} /></label>
+      <label className="filter-field range-field"><span>DATE RANGE</span><DateRangePicker ariaLabel="Date range" from={from} to={to} max={ymd(new Date())} onChange={(a, b) => { setFrom(a); setTo(b) }} /></label>
       <div className="filter-presets"><button className="outline-button" onClick={() => preset(7)}>7 DAYS</button><button className="outline-button" onClick={() => preset(30)}>30 DAYS</button></div>
-      <label className="filter-field"><span>PRODUCT</span><select aria-label="Filter by product" value={productId} onChange={(e) => setProductId(e.target.value)}><option value="">All products</option>{state.products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
-      <label className="filter-field"><span>REASON</span><select aria-label="Filter by reason" value={reason} onChange={(e) => setReason(e.target.value as '' | WasteReason)}><option value="">All reasons</option>{wasteReasons.map((r) => <option key={r}>{r}</option>)}</select></label>
+      <label className="filter-field"><span>PRODUCT</span><Select aria-label="Filter by product" value={productId} onChange={(e) => setProductId(e.target.value)}><option value="">All products</option>{state.products.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}</Select></label>
+      <label className="filter-field"><span>REASON</span><Select aria-label="Filter by reason" value={reason} onChange={(e) => setReason(e.target.value as '' | WasteReason)}><option value="">All reasons</option>{wasteReasons.map((r) => <option key={r}>{r}</option>)}</Select></label>
     </div>
     {!rangeOk && <p className="form-error">The start date is after the end date.</p>}
     {(list.error || summary.error) && <p className="form-error">{list.error ?? summary.error}</p>}
@@ -96,11 +97,11 @@ export function WastePanel() {
     <div className="data-table-wrap"><table className="data-table"><thead><tr>{['PRODUCT', 'QUANTITY', 'REASON', 'VALUE', 'LOGGED', 'BY', 'NOTES'].map((h) => <th key={h}>{h}</th>)}</tr></thead>
       <tbody>{rows.map((w) => <tr key={w.id}><td><b>{w.name}</b></td><td>{w.qty} {w.unit}s</td><td><StatusPill value={w.reason} /></td><td>{peso(w.value)}</td><td>{relativeDay(w.date)}</td><td>{w.byName}</td><td className="notes-cell">{w.notes || '—'}</td></tr>)}</tbody></table>
       {rows.length === 0 && <Empty>No write-offs match these filters.</Empty>}</div>
-    {logging && <Modal title="Log waste" eyebrow="WRITE-OFF" onClose={() => setLogging(null)} footer={<><button className="outline-button" onClick={() => setLogging(null)}>CANCEL</button><button className="primary-button" disabled={busy || logging.qty <= 0 || !selected || logging.qty > selected.stock} onClick={() => void submit()}>{busy ? 'SAVING…' : `LOG ${peso((selected?.cost ?? 0) * logging.qty)}`}</button></>}>
+    {logging && <Modal title="Log write-off" eyebrow="WRITE-OFF" onClose={() => setLogging(null)} footer={<><button className="outline-button" onClick={() => setLogging(null)}>CANCEL</button><button className="primary-button" disabled={busy || logging.qty <= 0 || !selected || logging.qty > selected.stock} onClick={() => void submit()}>{busy ? 'SAVING…' : `LOG ${peso((selected?.cost ?? 0) * logging.qty)}`}</button></>}>
       <div className="form-grid">
-        <Field label="PRODUCT"><select value={logging.productId} onChange={(e) => { setFormError(null); setLogging({ ...logging, productId: e.target.value, qty: 1 }) }}>{state.products.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.stock} on hand)</option>)}</select></Field>
+        <Field label="PRODUCT"><Select value={logging.productId} onChange={(e) => { setFormError(null); setLogging({ ...logging, productId: e.target.value, qty: 1 }) }}>{state.products.map((p) => <option key={p.id} value={p.id}>{p.name} ({p.stock} on hand)</option>)}</Select></Field>
         <Field label="QUANTITY" hint={selected ? `${selected.stock} in stock. A write-off can't be larger than that.` : undefined}><input type="number" min={1} max={selected?.stock} value={logging.qty} onChange={(e) => { setFormError(null); setLogging({ ...logging, qty: Math.max(0, Math.floor(Number(e.target.value))) }) }} /></Field>
-        <Field label="REASON"><select value={logging.reason} onChange={(e) => setLogging({ ...logging, reason: e.target.value as WasteReason })}>{wasteReasons.map((r) => <option key={r}>{r}</option>)}</select></Field>
+        <Field label="REASON"><Select value={logging.reason} onChange={(e) => setLogging({ ...logging, reason: e.target.value as WasteReason })}>{wasteReasons.map((r) => <option key={r}>{r}</option>)}</Select></Field>
         <Field label="NOTES"><input value={logging.notes} maxLength={255} onChange={(e) => setLogging({ ...logging, notes: e.target.value })} placeholder="Optional" /></Field>
       </div>
       {selected && logging.qty > selected.stock && <p className="form-error">Only {selected.stock} {selected.name} in stock.</p>}
@@ -145,11 +146,11 @@ export function RequestsPanel() {
         {group.open > 0 && owner && <button className="link-button" onClick={() => { void change(group.ids, 'Ordered'); actions.toast(`${group.count} requests marked as ordered`) }}>MARK ORDERED</button>}
       </div>)}{demand.length === 0 && <p className="muted-text pad">No requests yet.</p>}</div>
     </section>
-    <div className="table-toolbar"><label className="search-field compact"><span>⌕</span><input placeholder="Search requests" value={query} onChange={(e) => setQuery(e.target.value)} /></label><Segmented label="Status" options={['Open', 'All'] as const} value={status} onChange={setStatus} /></div>
+    <div className="table-toolbar"><SearchField compact placeholder="Search requests" value={query} onChange={setQuery} /><Segmented label="Status" options={['Open', 'All'] as const} value={status} onChange={setStatus} /></div>
     {list.error && <p className="form-error">{list.error}</p>}
     <div className="data-table-wrap"><table className="data-table"><thead><tr>{['REQUESTED ITEM', 'CATEGORY', 'REQUESTED BY', 'DATE', 'STATUS'].map((h) => <th key={h}>{h}</th>)}</tr></thead>
       <tbody>{rows.map((r) => <tr key={r.id}><td><b>{r.item}</b>{r.notes && <small>{r.notes}</small>}</td><td>{r.category}</td><td>{r.requestedBy}{r.contact && <small>{r.contact}</small>}</td><td>{relativeDay(r.date)}</td>
-        <td>{owner ? <select className={`status-select ${r.status.toLowerCase()}`} value={r.status} aria-label={`Status of ${r.item}`} onChange={(e) => void change([r.id], e.target.value as RequestStatus)}>{requestStatuses.map((s) => <option key={s}>{s}</option>)}</select> : <StatusPill value={r.status} />}</td></tr>)}</tbody></table>
+        <td>{owner ? <Select className={`status-select ${r.status.toLowerCase()}`} value={r.status} aria-label={`Status of ${r.item}`} onChange={(e) => void change([r.id], e.target.value as RequestStatus)}>{requestStatuses.map((s) => <option key={s}>{s}</option>)}</Select> : <StatusPill value={r.status} />}</td></tr>)}</tbody></table>
       {rows.length === 0 && <Empty>No requests.</Empty>}</div>
     {adding && <Modal title="New customer request" eyebrow="CUSTOMER DEMAND" onClose={() => setAdding(null)} footer={<><button className="outline-button" onClick={() => setAdding(null)}>CANCEL</button><button className="primary-button" disabled={!adding.item.trim()} onClick={() => { actions.addRequest(adding); actions.toast('Request logged'); setAdding(null); window.setTimeout(() => setVersion((v) => v + 1), 600) }}>SAVE REQUEST</button></>}>
       <RequestFields value={adding} onChange={setAdding} />
@@ -207,17 +208,19 @@ export function EmployeesPanel() {
         <td><div className="person-cell"><span className="avatar">{initials(e.name)}</span><div><b>{e.name}</b><small>{e.email}</small></div></div></td>
         <td>{e.role}</td><td><StatusPill value={e.status} /></td><td><ShiftCell employee={e} /></td><td>{peso(e.salesWeek, 0)}<small>{e.receiptsWeek} receipt{e.receiptsWeek === 1 ? '' : 's'}</small></td><td>{relativeDay(e.lastActive)}</td>
         <td className="employee-actions" onClick={(event) => event.stopPropagation()}><div>
-          <button className="outline-button" onClick={() => setActivityFor(e)}>ACTIVITY</button>
+          <button className="row-icon" data-tip="Activity" aria-label={`Activity for ${e.name}`} onClick={() => setActivityFor(e)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l3-8 4 16 3-8h4" /></svg></button>
           {e.role !== 'Owner' && (e.status === 'Inactive'
-            ? <button className="outline-button" onClick={() => void toggle(e, true)}>ACTIVATE</button>
-            : <button className="danger-button" onClick={() => (e.onTerminal ? setConfirming({ employee: e, onTerminal: e.onTerminal }) : void toggle(e, false))}>DEACTIVATE</button>)}
-                 <DeleteEmployeeButton employee={e} onDeleted={() => setVersion((v) => v + 1)} />
+            ? <button className="row-icon" data-tip="Activate" aria-label={`Activate ${e.name}`} onClick={() => void toggle(e, true)}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 12.5l5 5L20 6.5" /></svg></button>
+            : <button className="row-icon danger" data-tip="Deactivate" aria-label={`Deactivate ${e.name}`} onClick={() => (e.onTerminal ? setConfirming({ employee: e, onTerminal: e.onTerminal }) : void toggle(e, false))}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5" /><path d="M6 6l12 12" /></svg></button>)}
+          <DeleteEmployeeButton employee={e} onDeleted={() => setVersion((v) => v + 1)} />
         </div></td></tr>)}</tbody></table>
       {rows.length === 0 && <Empty>No employees.</Empty>}</div>
     {editing && <EmployeeModal employee={editing} isNew={!state.employees.some((e) => e.id === editing.id)} onClose={() => setEditing(null)} onSave={(e) => { void actions.saveEmployee(e).then(() => setVersion((v) => v + 1)); actions.toast('Employee saved'); setEditing(null) }} />}
     {activityFor && <ActivityModal employee={activityFor} onClose={() => setActivityFor(null)} />}
-    {confirming && <Modal title={`Deactivate ${confirming.employee.name}?`} eyebrow="END SHIFT" onClose={() => setConfirming(null)} footer={<><button className="outline-button" onClick={() => setConfirming(null)}>CANCEL</button><button className="danger-button" onClick={() => void toggle(confirming.employee, false)}>END SHIFT &amp; DEACTIVATE</button></>}>
-      <p>{confirming.employee.name} is working on <b>{confirming.onTerminal}</b>. Deactivating ends the shift now and locks that terminal until you assign someone else. Unfinished carts on that terminal are not saved.</p>
+    {confirming && <Modal title={`Deactivate ${confirming.employee.name}?`} eyebrow={confirming.onTerminal ? 'END SHIFT' : 'TEAM MEMBER'} onClose={() => setConfirming(null)} footer={<><button className="outline-button" onClick={() => setConfirming(null)}>CANCEL</button><button className="danger-button" onClick={() => void toggle(confirming.employee, false)}>{confirming.onTerminal ? 'END SHIFT & DEACTIVATE' : 'DEACTIVATE'}</button></>}>
+      {confirming.onTerminal
+        ? <p>{confirming.employee.name} is working on <b>{confirming.onTerminal}</b>. Deactivating ends the shift now and locks that terminal until you assign someone else. Unfinished carts on that terminal are not saved.</p>
+        : <p>{confirming.employee.name} will no longer be able to be assigned to a terminal. You can activate them again later.</p>}
     </Modal>}
   </div>
 }
@@ -274,8 +277,8 @@ function EmployeeModal({ employee, isNew, onClose, onSave }: { employee: Employe
     <div className="form-grid">
       <Field label="FULL NAME"><input autoFocus value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} /></Field>
       <Field label="EMAIL"><input type="email" value={draft.email} onChange={(e) => setDraft({ ...draft, email: e.target.value })} /></Field>
-      <Field label="ROLE"><select value={draft.role} disabled={!isNew} onChange={(e) => setDraft({ ...draft, role: e.target.value as Role })}>{roles.map((r) => <option key={r}>{r}</option>)}</select></Field>
-      <Field label="STATUS" hint={isOwner ? "The owner account can't be deactivated." : undefined}><select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as Employee['status'] })}>{['Active', 'On leave', 'Inactive'].filter((s) => !(isOwner && s === 'Inactive')).map((s) => <option key={s}>{s}</option>)}</select></Field>
+      <Field label="ROLE"><Select value={draft.role} disabled={!isNew} onChange={(e) => setDraft({ ...draft, role: e.target.value as Role })}>{roles.map((r) => <option key={r}>{r}</option>)}</Select></Field>
+      <Field label="STATUS" hint={isOwner ? "The owner account can't be deactivated." : undefined}><Select value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value as Employee['status'] })}>{['Active', 'On leave', 'Inactive'].filter((s) => !(isOwner && s === 'Inactive')).map((s) => <option key={s}>{s}</option>)}</Select></Field>
     </div>
     <p className="muted-text">Can open: {allowedWorkspaces(state.settings, draft.role).join(', ')}</p>
   </Modal>

@@ -11,7 +11,7 @@ const tileInfo: Record<WorkspaceName, { icon: string; text: string }> = {
   Dashboard: { icon: '▦', text: 'Store overview' },
   Inventory: { icon: '▤', text: 'Products, batches, stock' },
   Purchasing: { icon: '☰', text: 'Reorder lists, purchase orders' },
-  Waste: { icon: '⌁', text: 'Damaged, expired, spoiled' },
+  'Write-offs': { icon: '⌁', text: 'Damaged, expired, spoiled' },
   Requests: { icon: '☷', text: 'Items customers asked for' },
   Reports: { icon: '▥', text: 'Sales reports, X/Z readings' },
   'AI Insights': { icon: '✦', text: 'Demand forecast, trends, anomalies' },
@@ -69,7 +69,7 @@ export function MainMenu({ workspaces, onOpen }: { workspaces: WorkspaceName[]; 
     Transactions: <>{num(today.length)} sales today</>,
     Inventory: lowStock.length > 0 ? <span className="menu-tag">{lowStock.length} low stock</span> : 'Stock levels look healthy',
     Purchasing: <>{pendingOrders} order{pendingOrders === 1 ? '' : 's'} pending</>,
-    Waste: expiring.length > 0 ? <span className="menu-tag">{expiring.length} expiring soon</span> : 'Nothing expiring soon',
+    'Write-offs': expiring.length > 0 ? <span className="menu-tag">{expiring.length} expiring soon</span> : 'Nothing expiring soon',
     Requests: <>{newRequests} pending</>,
   }
 

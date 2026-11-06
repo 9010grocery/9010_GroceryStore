@@ -5,8 +5,9 @@ import { useCurrentUser, useStore, type SettingsSection } from '../../store/Stor
 import { useAuth } from '../../context/AuthContext'
 import { Field } from '../ui'
 import { MyAccount } from './MyAccount'
+import { Select } from '../Select'
 
-const sections: SettingsSection[] = ['My account', 'Business profile', 'Tax & receipts', 'Payment methods', 'Inventory & AI', 'Notifications', 'Access & roles', 'Data']
+const sections: SettingsSection[] = ['My account', 'Business profile', 'Tax & receipts', 'Payment methods', 'Inventory & AI', 'Notifications', 'Access & roles', 'Data', 'Testing']
 
 export function SettingsNav() {
   const { state, actions } = useStore()
@@ -53,12 +54,16 @@ export function SettingsPanel() {
     {section === 'Inventory & AI' && <>
       <h2>Inventory</h2><p>Controls how recent sales turn into reorder suggestions and expiry alerts.</p>
       <div className="form-row">
-        <Field label="SERVICE LEVEL" hint="Higher = more safety stock, fewer stock-outs"><select value={draft.serviceLevel} onChange={(e) => set('serviceLevel', Number(e.target.value))}>{[0.8, 0.9, 0.95, 0.975, 0.99].map((v) => <option key={v} value={v}>{(v * 100).toFixed(1).replace('.0', '')}%</option>)}</select></Field>
+        <Field label="SERVICE LEVEL" hint="Higher = more safety stock, fewer stock-outs"><Select value={draft.serviceLevel} onChange={(e) => set('serviceLevel', Number(e.target.value))}>{[0.8, 0.9, 0.95, 0.975, 0.99].map((v) => <option key={v} value={v}>{(v * 100).toFixed(1).replace('.0', '')}%</option>)}</Select></Field>
         <Field label="TARGET DAYS OF COVER" hint="Stock to hold after the lead time"><input type="number" min={1} max={60} value={draft.coverDays} onChange={(e) => set('coverDays', Number(e.target.value))} /></Field>
       </div>
       <div className="form-row">
         <Field label="EXPIRY WARNING (DAYS)"><input type="number" min={1} max={60} value={draft.expiryWarningDays} onChange={(e) => set('expiryWarningDays', Number(e.target.value))} /></Field>
       </div>
+    </>}
+    {section === 'Testing' && <>
+      <h2>Testing tools</h2><p>For trying the app before barcode scanners are set up. These stay on this PC and should be off in the store.</p>
+      <div className="toggle-list"><label className="toggle-row"><div><b>Simulate barcode scan</b><small>Shows a ▥ button in the Point of Sale search bar that adds a random product to the cart, as a real scan would.</small></div><input type="checkbox" checked={draft.simulateBarcodeScan} disabled={readOnly} onChange={(e) => set('simulateBarcodeScan', e.target.checked)} /></label></div>
     </>}
     {section === 'Notifications' && <>
       <h2>Notifications</h2><p>Choose which alerts appear on the dashboard and in the AI insights feed.</p>
@@ -71,7 +76,7 @@ export function SettingsPanel() {
       </tbody></table></div>
     </>}
     {section === 'Data' && state.source === 'live' && <>
-      <h2>Store data</h2><p>Products, stock, sales, refunds, waste, customer requests and employees are read from and saved to the store database on the server PC. To bring in records from the old system, open the Data Import panel in Admin Station.</p>
+      <h2>Store data</h2><p>Products, stock, sales, refunds, write-offs, customer requests and employees are read from and saved to the store database on the server PC. To bring in records from the old system, open the Data Import panel in Admin Station.</p>
       <button className="outline-button" onClick={() => actions.navigate('Admin Station')}>OPEN ADMIN STATION →</button>
     </>}
     {section === 'Data' && state.source === 'demo' && <>

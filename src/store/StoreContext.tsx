@@ -21,7 +21,7 @@ export interface UiState {
   inventoryFilter: 'All' | 'Low stock' | 'Near expiry' | 'Out of stock'
 }
 
-export type SettingsSection = 'My account' | 'Business profile' | 'Tax & receipts' | 'Payment methods' | 'Inventory & AI' | 'Notifications' | 'Access & roles' | 'Data'
+export type SettingsSection = 'My account' | 'Business profile' | 'Tax & receipts' | 'Payment methods' | 'Inventory & AI' | 'Notifications' | 'Access & roles' | 'Data' | 'Testing'
 
 export interface Toast { id: number; message: string; tone: 'success' | 'error' | 'info' }
 
@@ -579,7 +579,9 @@ export function allowedWorkspaces(settings: Settings, role: Role): WorkspaceName
   // Tabs always follow allWorkspaces' order. Saved settings can still name a workspace that has since been
   // merged into another (e.g. Employees into Admin Station); those are dropped.
   const saved = settings.rolePermissions[role] ?? []
-  const configured = allWorkspaces.filter((w) => saved.includes(w))
+  // Settings saved before 'Waste' became 'Write-offs' still say 'Waste'.
+  const savedNames: string[] = saved.map((w) => (w as string) === 'Waste' ? 'Write-offs' : w)
+  const configured = allWorkspaces.filter((w) => savedNames.includes(w))
   return role === 'Owner' ? configured : configured.filter((w) => !OWNER_ONLY_WORKSPACES.includes(w))
 }
 

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { iconRegistry } from '../icons/iconRegistry'
 import { Field, Segmented } from '../workspace/ui'
+import { Select } from '../workspace/Select'
 
 type Role = 'Server PC' | 'Cashier terminal'
 type TerminalChoice = { terminal_id: string; terminal_name: string | null }
@@ -83,7 +84,7 @@ function DeviceSetup() {
         </> : <>
           <div className="form-row"><Field label="SERVER PC ADDRESS" hint="LAN IP of the server PC, e.g. 192.168.1.10"><input value={serverHost} placeholder="192.168.1.10" onChange={(e) => setServerHost(e.target.value)} /></Field><Field label="API PORT"><input inputMode="numeric" value={apiPort} onChange={(e) => setApiPort(e.target.value.replace(/\D/g, ''))} /></Field></div>
           {list && list.length > 0
-            ? <Field label="TERMINAL" hint="Missing one? Add it in Admin Station on the server PC, then retype the address."><select value={terminalId} onChange={(e) => setTerminalId(e.target.value)}>{list.map((t) => <option key={t.terminal_id} value={t.terminal_id}>{t.terminal_id}{t.terminal_name ? ` · ${t.terminal_name}` : ''}</option>)}</select></Field>
+            ? <Field label="TERMINAL" hint="Missing one? Add it in Admin Station on the server PC, then retype the address."><Select value={terminalId} onChange={(e) => setTerminalId(e.target.value)}>{list.map((t) => <option key={t.terminal_id} value={t.terminal_id}>{t.terminal_id}{t.terminal_name ? ` · ${t.terminal_name}` : ''}</option>)}</Select></Field>
             : <Field label="TERMINAL" hint={list ? 'The server has no enabled terminals yet. Add this PC in Admin Station first.' : lookupError ? `Couldn't reach the server (${lookupError}). Type the ID the owner gave this PC.` : 'Enter the server address to list terminals, or type the ID (e.g. PC-04).'}><input value={terminalId} maxLength={5} aria-invalid={!TERMINAL_ID.test(terminalId)} onChange={(e) => setTerminalId(e.target.value.toUpperCase())} /></Field>}
         </>}
       </div>

@@ -33,8 +33,8 @@ export function DashboardPanel() {
   const hour = now.getHours()
   const greeting = hour < 12 ? 'Good morning' : hour < 18 ? 'Good afternoon' : 'Good evening'
   const allowed = allowedWorkspaces(state.settings, user?.role ?? 'Owner')
-  const shortcuts = (['Point of Sale', 'Inventory', 'AI Insights', 'Waste', 'Reports', 'Settings'] as WorkspaceName[]).filter((w) => allowed.includes(w))
-  const shortcutText: Partial<Record<WorkspaceName, string>> = { 'Point of Sale': 'Start a transaction', Inventory: 'Manage stock and reorders', 'AI Insights': 'Forecasts, trends & basket analysis', Waste: 'Track losses', Reports: 'X/Z readings, VAT & BIR', Settings: 'Store preferences' }
+  const shortcuts = (['Point of Sale', 'Inventory', 'AI Insights', 'Write-offs', 'Reports', 'Settings'] as WorkspaceName[]).filter((w) => allowed.includes(w))
+  const shortcutText: Partial<Record<WorkspaceName, string>> = { 'Point of Sale': 'Start a transaction', Inventory: 'Manage stock and reorders', 'AI Insights': 'Forecasts, trends & basket analysis', 'Write-offs': 'Track losses', Reports: 'X/Z readings, VAT & BIR', Settings: 'Store preferences' }
 
   // Demo mode (no server): the same numbers worked out in the browser, as before.
   const demo = (() => {

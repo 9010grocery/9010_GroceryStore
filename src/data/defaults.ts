@@ -20,7 +20,7 @@ export const colorForCategory = (category: string) => categoryColor[category] ??
 export const OWNER_ONLY_WORKSPACES: Settings['rolePermissions']['Owner'] = ['Admin Station', 'Settings']
 
 // Tab order. Admin Station comes first for the owner; cashiers never see it.
-export const allWorkspaces: Settings['rolePermissions']['Owner'] = ['Admin Station', 'Dashboard', 'Point of Sale', 'Transactions', 'Inventory', 'Waste', 'Purchasing', 'Requests', 'AI Insights', 'Reports', 'Settings']
+export const allWorkspaces: Settings['rolePermissions']['Owner'] = ['Admin Station', 'Dashboard', 'Point of Sale', 'Transactions', 'Inventory', 'Write-offs', 'Purchasing', 'Requests', 'AI Insights', 'Reports', 'Settings']
 
 /** Store details are placeholders until the owner fills them in under Settings → Business profile. */
 export const defaultSettings: Settings = {
@@ -36,6 +36,7 @@ export const defaultSettings: Settings = {
   permitNumber: '',
   payments: { Cash: true, GCash: true, Card: true, Maya: true },
   discountThreshold: 20,
+  simulateBarcodeScan: false,
   serviceLevel: 0.95,
   coverDays: 7,
   expiryWarningDays: 7,

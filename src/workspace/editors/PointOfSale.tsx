@@ -1,4 +1,4 @@
-import { Fragment, useMemo, useRef, useState } from 'react'
+import { Fragment, useMemo, useRef, useState, type KeyboardEvent } from 'react'
 import { OwnerPinModal } from '../../components/OwnerPinModal'
 import type { CustomerRequest, PaymentMethod, Transaction } from '../../data/types'
 import { basketRules } from '../../lib/ai'
@@ -8,7 +8,7 @@ import { useHorizontalScroll } from '../../hooks/useHorizontalScroll'
 import { useScannerWedge } from '../../hooks/useScannerWedge'
 import { apiErrorMessage, postDiscountVerify } from '../../services/api'
 import { useCurrentUser, useStore } from '../../store/StoreContext'
-import { Field, Modal, Segmented } from '../ui'
+import { ConfirmModal, Field, Modal, SearchField, Segmented } from '../ui'
 import { RequestFields } from './Operations'
 
 export function ProductGrid() {
@@ -21,7 +21,13 @@ export function ProductGrid() {
   const products = state.products.filter((p) => p.active)
   const categories = ['All items', ...new Set(products.map((p) => p.category))]
   const q = query.trim().toLowerCase()
-  const filtered = products.filter((p) => (category === 'All items' || p.category === category) && (!q || p.name.toLowerCase().includes(q) || p.sku.toLowerCase() === q || p.barcode.includes(q)))
+  // A scanner types its code in a fast burst. While that is happening the grid is left alone (no flicker as digits arrive)
+  // and the code is added to the cart when the scanner presses Enter.
+  const [scanning, setScanning] = useState(false)
+  const lastKey = useRef(0)
+  const scanTimer = useRef<number | undefined>(undefined)
+  const shown = scanning ? '' : q
+  const filtered = products.filter((p) => (category === 'All items' || p.category === category) && (!shown || p.name.toLowerCase().includes(shown) || p.sku.toLowerCase() === shown || p.barcode.includes(shown)))
   const inCart = new Map(state.cart.map((l) => [l.productId, l.qty]))
   const [requesting, setRequesting] = useState<Omit<CustomerRequest, 'id' | 'date' | 'status'> | null>(null)
 
@@ -43,6 +49,18 @@ export function ProductGrid() {
     else add(hit.id)
   })
 
+  function onSearchKey(e: KeyboardEvent<HTMLInputElement>) {
+    if (e.key === 'Enter') { window.clearTimeout(scanTimer.current); setScanning(false); onScan() }
+    else if (e.key === 'Escape') { window.clearTimeout(scanTimer.current); setScanning(false); setQuery('') }
+    else if (e.key.length === 1) {
+      const now = performance.now()
+      if (now - lastKey.current < 70) setScanning(true)
+      lastKey.current = now
+      window.clearTimeout(scanTimer.current)
+      scanTimer.current = window.setTimeout(() => setScanning(false), 300)
+    }
+  }
+
   function onScan() {
     const exact = products.find((p) => p.barcode === q || p.sku.toLowerCase() === q)
     const target = exact ?? (filtered.length === 1 ? filtered[0] : null)
@@ -54,8 +72,8 @@ export function ProductGrid() {
 
   return <div className="pos-products">
     <div className="panel-toolbar">
-      <label className="search-field"><span>⌕</span><input ref={inputRef} autoFocus placeholder="Search products, type SKU or scan barcode, then Enter" value={query} onChange={(e) => setQuery(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter') onScan(); if (e.key === 'Escape') setQuery('') }} /><kbd>ENTER</kbd></label>
-      <button className="scan-button" title="Simulate barcode scan" aria-label="Simulate barcode scan" onClick={() => { const p = products[Math.floor(Math.random() * products.length)]; setQuery(p.barcode); inputRef.current?.focus() }}>▥</button>
+      <SearchField inputRef={inputRef} autoFocus placeholder="Search products, type SKU or scan barcode, then Enter" value={query} onChange={setQuery} onKeyDown={onSearchKey} />
+      {state.settings.simulateBarcodeScan && <button className="scan-button" title="Simulate barcode scan" aria-label="Simulate barcode scan" onClick={() => { const p = products[Math.floor(Math.random() * products.length)]; if (p) add(p.id); inputRef.current?.focus() }}>▥</button>}
     </div>
     <div className="category-pills" ref={pills.attach}>{categories.map((item) => <button key={item} className={category === item ? 'selected' : ''} onClick={() => setCategory(item)}>{item}</button>)}</div>
     <div className="product-grid">{filtered.map((product) => <button className={product.stock <= 0 ? 'product-card sold-out' : 'product-card'} disabled={product.stock <= 0} key={product.id} onClick={() => add(product.id)}>
@@ -76,6 +94,8 @@ export function CartPanel() {
   const [paying, setPaying] = useState(false)
   const [receipt, setReceipt] = useState<Transaction | null>(null)
   const [showHeld, setShowHeld] = useState(false)
+  // Anything that removes or discards waits here until the cashier confirms it.
+  const [confirming, setConfirming] = useState<{ title: string; message: string; label: string; run: () => void } | null>(null)
   // What the discount window is for: every item ('all') or one product id.
   const [discounting, setDiscounting] = useState<'all' | string | null>(null)
   const [approving, setApproving] = useState<number | null>(null)
@@ -125,9 +145,16 @@ export function CartPanel() {
   }
   function removeDiscount() {
     const target = discounting
-    setDiscounting(null)
-    if (target === 'all') actions.setAllDiscount(null)
-    else if (target) actions.setLineDiscount(target, null)
+    setConfirming({
+      title: 'Remove this discount?',
+      message: target === 'all' ? 'Every item goes back to its full price.' : 'This item goes back to its full price.',
+      label: 'REMOVE DISCOUNT',
+      run: () => {
+        setDiscounting(null)
+        if (target === 'all') actions.setAllDiscount(null)
+        else if (target) actions.setLineDiscount(target, null)
+      },
+    })
   }
   const rules = useMemo(() => basketRules(state.transactions), [state.transactions])
   const cartIds = new Set(state.cart.map((l) => l.productId))
@@ -135,14 +162,14 @@ export function CartPanel() {
   const suggested = suggestion ? state.products.find((p) => p.id === suggestion.b) : undefined
 
   return <div className="cart-panel">
-    <div className="cart-meta"><span>NEW SALE <b>· receipt no. is given when paid</b> · {user?.name ?? 'Cashier'}</span><div><button onClick={() => setShowHeld(true)}>HELD ({state.heldCarts.length})</button><button disabled={!lines.length} onClick={() => { actions.holdCart(`Sale ${state.heldCarts.length + 1} · ${time(new Date())}`); actions.toast('Sale put on hold', 'info') }}>HOLD</button><button disabled={!lines.length} onClick={actions.clearCart}>CLEAR</button></div></div>
+    <div className="cart-meta"><span>NEW SALE <b>· receipt no. is given when paid</b> · {user?.name ?? 'Cashier'}</span><div><button onClick={() => setShowHeld(true)}>HELD ({state.heldCarts.length})</button><button disabled={!lines.length} onClick={() => { actions.holdCart(`Sale ${state.heldCarts.length + 1} · ${time(new Date())}`); actions.toast('Sale put on hold', 'info') }}>HOLD</button><button disabled={!lines.length} onClick={() => setConfirming({ title: 'Clear this sale?', message: `All ${lines.reduce((n, l) => n + l.qty, 0)} items are removed from the cart. This can't be undone.`, label: 'CLEAR SALE', run: actions.clearCart })}>CLEAR</button></div></div>
     <div className="cart-customer"><span className="eyebrow">CUSTOMER</span><Segmented label="Customer type" options={['Regular', 'Senior/PWD'] as const} value={state.customerType === 'Regular' ? 'Regular' : 'Senior/PWD'} onChange={(kind) => actions.setCustomerType(kind === 'Regular' ? 'Regular' : 'Senior')} /></div>
     {isRegular && <div className="cart-discount">
       <span className="eyebrow">DISCOUNT</span>
       {biggest > 0 ? <span className={needsApproval ? 'applied needs-approval' : 'applied'}>
         <b>{discountedCount} item{discountedCount === 1 ? '' : 's'} · up to {biggest}%{approved && approval?.approvedBy ? ` · approved by ${approval.approvedBy}` : needsApproval ? ' · owner PIN needed' : ''}</b>
         {needsApproval && <button onClick={() => setApproving(biggest)}>GET APPROVAL</button>}
-        <button className="remove" aria-label="Remove all discounts" onClick={() => { actions.setAllDiscount(null); actions.setDiscount(null) }}>✕</button>
+        <button className="remove" aria-label="Remove all discounts" onClick={() => setConfirming({ title: 'Remove all discounts?', message: 'Every item goes back to its full price.', label: 'REMOVE DISCOUNTS', run: () => { actions.setAllDiscount(null); actions.setDiscount(null) } })}>✕</button>
       </span> : <small className="discount-hint">Tap ％ on an item, or</small>}
       <button disabled={!lines.length} onClick={() => setDiscounting('all')}>{biggest > 0 ? 'ALL ITEMS' : '＋ ALL ITEMS'}</button>
     </div>}
@@ -153,7 +180,7 @@ export function CartPanel() {
           {isRegular && <span className="line-discount"><button aria-label={`Discount ${product.name}`} title="Discount this item" onClick={() => setDiscounting(product.id)}>％</button>{lineInfo[index].shown ? <em title={lineInfo[index].kind === 'manual' ? undefined : lineInfo[index].kind === 'promo' ? 'Promotion set by the owner' : 'Batch markdown set by the owner'}>{lineInfo[index].kind === 'promo' ? `PROMO −${lineInfo[index].shown}%` : lineInfo[index].kind === 'batch' ? (lineInfo[index].marked?.percent ? `NEAR EXPIRY · ${lineInfo[index].marked!.units === qty ? 'all ' : `${lineInfo[index].marked!.units} of `}${qty} at −${lineInfo[index].marked!.percent}%` : `NEAR EXPIRY · avg −${lineInfo[index].shown}%`) : `−${lineInfo[index].shown}%`}</em> : null}</span>}
         </div>
         <div className="quantity-control">
-          <button aria-label={`Remove one ${product.name}`} onClick={() => actions.setCartQty(product.id, qty - 1)}>−</button>
+          <button aria-label={`Remove one ${product.name}`} onClick={() => qty > 1 ? actions.setCartQty(product.id, qty - 1) : setConfirming({ title: `Remove ${product.name}?`, message: 'It is taken out of this sale.', label: 'REMOVE ITEM', run: () => actions.setCartQty(product.id, 0) })}>−</button>
           <input aria-label={`${product.name} quantity`} value={qty} inputMode="numeric" onChange={(e) => { const value = Number(e.target.value.replace(/\D/g, '')); actions.setCartQty(product.id, Math.max(1, Math.min(product.stock, value))) }} />
           <button aria-label={`Add one ${product.name}`} disabled={qty >= product.stock} onClick={() => actions.setCartQty(product.id, qty + 1)}>+</button>
         </div>
@@ -197,8 +224,9 @@ export function CartPanel() {
     {receipt && <ReceiptModal txn={receipt} onClose={() => setReceipt(null)} />}
     {showHeld && <Modal title="Held sales" eyebrow="PARKED TRANSACTIONS" onClose={() => setShowHeld(false)}>
       {state.heldCarts.length === 0 && <p className="muted-text">No sales on hold.</p>}
-      <div className="held-list">{state.heldCarts.map((held) => <div className="held-row" key={held.id}><div><b>{held.label}</b><small>{held.lines.reduce((s, l) => s + l.qty, 0)} items · {held.customerType}</small></div><button className="outline-button" onClick={() => actions.discardHeld(held.id)}>DISCARD</button><button className="primary-button" onClick={() => { actions.resumeCart(held.id); setShowHeld(false) }}>RESUME</button></div>)}</div>
+      <div className="held-list">{state.heldCarts.map((held) => <div className="held-row" key={held.id}><div><b>{held.label}</b><small>{held.lines.reduce((s, l) => s + l.qty, 0)} items · {held.customerType}</small></div><button className="outline-button" onClick={() => setConfirming({ title: `Discard ${held.label}?`, message: 'This held sale is deleted and its items are not restored. This cannot be undone.', label: 'DISCARD SALE', run: () => actions.discardHeld(held.id) })}>DISCARD</button><button className="primary-button" onClick={() => { actions.resumeCart(held.id); setShowHeld(false) }}>RESUME</button></div>)}</div>
     </Modal>}
+    {confirming && <ConfirmModal title={confirming.title} message={<p>{confirming.message}</p>} confirmLabel={confirming.label} onCancel={() => setConfirming(null)} onConfirm={() => { const run = confirming.run; setConfirming(null); run() }} />}
   </div>
 }
 
